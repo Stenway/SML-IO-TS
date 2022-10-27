@@ -1,0 +1,38 @@
+{
+  "name": "@stenway/sml-io",
+  "version": "0.0.1",
+  "description": "Stefan John / Stenway / SimpleML.com / 2022",
+  "homepage": "https://www.simpleml.com",
+  "repository": "github:Stenway/SML-IO-TS",
+  "bugs": {
+    "url": "https://github.com/Stenway/SML-IO-TS/issues"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "/dist"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "simple markup language",
+    "markup language",
+    "xml",
+    "json",
+    "yaml"
+  ],
+  "author": "Stefan John",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^18.11.7",
+    "typescript": "^4.8.4"
+  },
+  "dependencies": {
+    "@stenway/reliabletxt": "^0.0.2",
+    "@stenway/reliabletxt-io": "^0.0.2",
+    "@stenway/wsv": "^0.0.2",
+    "@stenway/wsv-io": "^0.0.1",
+    "@stenway/sml": "^0.0.2"
+  }
+}
