@@ -10,7 +10,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SmlStreamWriter = exports.SyncSmlStreamWriter = exports.SyncSmlStreamReader = exports.SyncWsvStreamLineIterator = exports.SmlFile = void 0;
+exports.SmlStreamWriter = exports.SyncSmlStreamWriter = exports.SmlStreamReader = exports.SyncSmlStreamReader = exports.WsvStreamLineIterator = exports.SyncWsvStreamLineIterator = exports.SmlFile = void 0;
 const reliabletxt_io_1 = require("@stenway/reliabletxt-io");
 const sml_1 = require("@stenway/sml");
 const wsv_io_1 = require("@stenway/wsv-io");
@@ -114,6 +114,64 @@ class SyncWsvStreamLineIterator {
 }
 exports.SyncWsvStreamLineIterator = SyncWsvStreamLineIterator;
 // ----------------------------------------------------------------------
+class WsvStreamLineIterator {
+    constructor(reader, currentLine, endKeyword) {
+        this.index = 0;
+        this.reader = reader;
+        this.currentLine = currentLine;
+        this.endKeyword = endKeyword;
+    }
+    static create(reader, endKeyword) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const currentLine = yield reader.readLine();
+            return new WsvStreamLineIterator(reader, currentLine, endKeyword);
+        });
+    }
+    getEndKeyword() {
+        return this.endKeyword;
+    }
+    hasLine() {
+        return __awaiter(this, void 0, void 0, function* () {
+            return this.currentLine !== null;
+        });
+    }
+    isEmptyLine() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this.currentLine === null) {
+                throw new Error(`Invalid state`);
+            }
+            return (yield this.hasLine()) && !this.currentLine.hasValues;
+        });
+    }
+    getLine() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this.currentLine === null) {
+                throw new Error(`Invalid state`);
+            }
+            const result = this.currentLine;
+            this.currentLine = yield this.reader.readLine();
+            this.index++;
+            return result;
+        });
+    }
+    getLineAsArray() {
+        return __awaiter(this, void 0, void 0, function* () {
+            return (yield this.getLine()).values;
+        });
+    }
+    toString() {
+        let result = "(" + (this.index + 1) + "): ";
+        if (this.currentLine !== null) {
+            result += this.currentLine.toString();
+        }
+        return result;
+    }
+    getLineIndex() {
+        return this.index;
+    }
+}
+exports.WsvStreamLineIterator = WsvStreamLineIterator;
+// ----------------------------------------------------------------------
 class SyncSmlStreamReader {
     constructor(filePath, preserveWhitespacesAndComments = true, chunkSize = 4096) {
         this.emptyNodesBefore = [];
@@ -124,7 +182,10 @@ class SyncSmlStreamReader {
             const result = SmlEndKeywordDetector.getEndKeywordAndPositionSync(this.reader.handle, this.encoding);
             this.endKeyword = result[0];
             this.iterator = new SyncWsvStreamLineIterator(this.reader, this.endKeyword);
-            this.root = sml_1.SmlParser.readRootElement(this.iterator, this.emptyNodesBefore);
+            this.root = sml_1.SmlParser.readRootElementSync(this.iterator, this.emptyNodesBefore);
+            if (!preserveWhitespacesAndComments) {
+                this.emptyNodesBefore = [];
+            }
         }
         catch (error) {
             this.reader.close();
@@ -143,7 +204,7 @@ class SyncSmlStreamReader {
     readNode() {
         if (!this.preserveWhitespacesAndComments) {
             for (;;) {
-                const result = sml_1.SmlParser.readNode(this.iterator, this.root);
+                const result = sml_1.SmlParser.readNodeSync(this.iterator, this.root);
                 if (result instanceof sml_1.SmlEmptyNode) {
                     continue;
                 }
@@ -151,7 +212,7 @@ class SyncSmlStreamReader {
             }
         }
         else {
-            return sml_1.SmlParser.readNode(this.iterator, this.root);
+            return sml_1.SmlParser.readNodeSync(this.iterator, this.root);
         }
     }
     close() {
@@ -159,6 +220,69 @@ class SyncSmlStreamReader {
     }
 }
 exports.SyncSmlStreamReader = SyncSmlStreamReader;
+// ----------------------------------------------------------------------
+class SmlStreamReader {
+    constructor(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore) {
+        this.reader = reader;
+        this.root = root;
+        this.endKeyword = endKeyword;
+        this.iterator = iterator;
+        this.preserveWhitespacesAndComments = preserveWhitespacesAndComments;
+        if (!preserveWhitespacesAndComments) {
+            emptyNodesBefore = [];
+        }
+        this.emptyNodesBefore = emptyNodesBefore;
+    }
+    get encoding() {
+        return this.reader.encoding;
+    }
+    get isClosed() {
+        return this.reader.isClosed;
+    }
+    get handle() {
+        return this.reader.handle;
+    }
+    static create(filePath, preserveWhitespacesAndComments = true, chunkSize = 4096) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const reader = yield wsv_io_1.WsvStreamReader.create(filePath, preserveWhitespacesAndComments, chunkSize);
+            try {
+                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+                const result = yield SmlEndKeywordDetector.getEndKeywordAndPosition(reader.handle, reader.encoding);
+                const endKeyword = result[0];
+                const iterator = yield WsvStreamLineIterator.create(reader, endKeyword);
+                const emptyNodesBefore = [];
+                const root = yield sml_1.SmlParser.readRootElement(iterator, emptyNodesBefore);
+                return new SmlStreamReader(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore);
+            }
+            catch (error) {
+                reader.close();
+                throw error;
+            }
+        });
+    }
+    readNode() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.preserveWhitespacesAndComments) {
+                for (;;) {
+                    const result = yield sml_1.SmlParser.readNode(this.iterator, this.root);
+                    if (result instanceof sml_1.SmlEmptyNode) {
+                        continue;
+                    }
+                    return result;
+                }
+            }
+            else {
+                return yield sml_1.SmlParser.readNode(this.iterator, this.root);
+            }
+        });
+    }
+    close() {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.reader.close();
+        });
+    }
+}
+exports.SmlStreamReader = SmlStreamReader;
 // ----------------------------------------------------------------------
 class SmlEndKeywordDetector {
     static getEndKeywordAndPositionSync(handle, encoding) {

@@ -254,6 +254,107 @@ test("SyncWsvStreamLineIterator", () => {
     reader.close();
 });
 // ----------------------------------------------------------------------
+describe("SmlStreamReader Constructor", () => {
+    test.each([
+        ["Root\nEnd", "End"],
+        ["Root\nend", "end"],
+        ["Root\n-", null],
+        ["契約\nエンド", "エンド"],
+        ["Root\nEnd  ", "End"],
+        ["Root\n  End  \n", "End"],
+        ["Root\n  End  \n  \n  ", "End"],
+    ])("Given %p", (input, output) => __awaiter(void 0, void 0, void 0, function* () {
+        yield reliabletxt_io_1.ReliableTxtFile.writeAllText(input, testFilePath, reliabletxt_2.ReliableTxtEncoding.Utf8);
+        const reader = yield src_1.SmlStreamReader.create(testFilePath);
+        expect(reader.encoding).toEqual(reliabletxt_2.ReliableTxtEncoding.Utf8);
+        expect(reader.endKeyword).toEqual(output);
+        expect(reader.handle !== null).toEqual(true);
+        yield reader.close();
+    }));
+    test.each([
+        [reliabletxt_2.ReliableTxtEncoding.Utf16],
+        [reliabletxt_2.ReliableTxtEncoding.Utf16Reverse],
+        [reliabletxt_2.ReliableTxtEncoding.Utf32],
+    ])("Given %p throws", (encoding) => __awaiter(void 0, void 0, void 0, function* () {
+        yield reliabletxt_io_1.ReliableTxtFile.writeAllText("Root\nEnd", testFilePath, encoding);
+        yield expect(() => __awaiter(void 0, void 0, void 0, function* () { return yield src_1.SmlStreamReader.create(testFilePath); })).rejects.toThrowError();
+    }));
+    test("Invalid end keyword", () => __awaiter(void 0, void 0, void 0, function* () {
+        yield reliabletxt_io_1.ReliableTxtFile.writeAllText("Root\nEnd End", testFilePath, reliabletxt_2.ReliableTxtEncoding.Utf8);
+        yield expect(() => __awaiter(void 0, void 0, void 0, function* () { return yield src_1.SmlStreamReader.create(testFilePath); })).rejects.toThrowError();
+    }));
+    test("Chunk size", () => __awaiter(void 0, void 0, void 0, function* () {
+        yield reliabletxt_io_1.ReliableTxtFile.writeAllText("Root\nEnd", testFilePath, reliabletxt_2.ReliableTxtEncoding.Utf8);
+        yield expect(() => __awaiter(void 0, void 0, void 0, function* () { return yield src_1.SmlStreamReader.create(testFilePath, true, 1); })).rejects.toThrowError("Chunk size too small");
+    }));
+});
+test("SmlStreamReader.isClosed", () => __awaiter(void 0, void 0, void 0, function* () {
+    yield reliabletxt_io_1.ReliableTxtFile.writeAllText("Root\nEnd", testFilePath, reliabletxt_2.ReliableTxtEncoding.Utf8);
+    const writer = yield src_1.SmlStreamReader.create(testFilePath);
+    expect(writer.isClosed).toEqual(false);
+    yield writer.close();
+    expect(writer.isClosed).toEqual(true);
+}));
+describe("SmlStreamReader.readLine", () => {
+    test("Null", () => __awaiter(void 0, void 0, void 0, function* () {
+        yield reliabletxt_io_1.ReliableTxtFile.writeAllText("Root\n\tAttribute1 10\n\tSub\n\tEnd\n\t#comment\nEnd", testFilePath);
+        const reader = yield src_1.SmlStreamReader.create(testFilePath);
+        const line1 = yield reader.readNode();
+        if (line1 === null) {
+            throw Error();
+        }
+        expect(line1.toString()).toEqual("\tAttribute1 10");
+        const line2 = yield reader.readNode();
+        if (line2 === null) {
+            throw Error();
+        }
+        expect(line2.toString()).toEqual("\tSub\n\tEnd");
+        const line3 = yield reader.readNode();
+        if (line3 === null) {
+            throw Error();
+        }
+        expect(line3.toString()).toEqual("\t#comment");
+        expect(yield reader.readNode()).toEqual(null);
+        yield reader.close();
+    }));
+    test("Not preserving", () => __awaiter(void 0, void 0, void 0, function* () {
+        yield reliabletxt_io_1.ReliableTxtFile.writeAllText("Root\n\tAttribute1 10\n\tSub\n\tEnd\n\t#comment\nEnd", testFilePath);
+        const reader = yield src_1.SmlStreamReader.create(testFilePath, false);
+        const line1 = yield reader.readNode();
+        if (line1 === null) {
+            throw Error();
+        }
+        expect(line1.toString()).toEqual("Attribute1 10");
+        const line2 = yield reader.readNode();
+        if (line2 === null) {
+            throw Error();
+        }
+        expect(line2.toString()).toEqual("Sub\nEnd");
+        expect(yield reader.readNode()).toEqual(null);
+        yield reader.close();
+    }));
+    test("Closed", () => __awaiter(void 0, void 0, void 0, function* () {
+        yield reliabletxt_io_1.ReliableTxtFile.writeAllText("Root\nEnd", testFilePath);
+        const reader = yield src_1.SmlStreamReader.create(testFilePath);
+        yield reader.close();
+        yield expect(() => __awaiter(void 0, void 0, void 0, function* () { return yield reader.readNode(); })).rejects.toThrowError();
+    }));
+});
+// ----------------------------------------------------------------------
+test("WsvStreamLineIterator", () => __awaiter(void 0, void 0, void 0, function* () {
+    yield reliabletxt_io_1.ReliableTxtFile.writeAllText("Root\nEnd", testFilePath);
+    const reader = yield wsv_io_1.WsvStreamReader.create(testFilePath);
+    const iterator = yield src_1.WsvStreamLineIterator.create(reader, "End");
+    expect(yield iterator.getLineAsArray()).toEqual(["Root"]);
+    expect(iterator.toString()).toEqual("(2): End");
+    expect(iterator.getLineIndex()).toEqual(1);
+    expect((yield iterator.getLine()).toString()).toEqual("End");
+    expect(yield iterator.hasLine()).toEqual(false);
+    yield expect(() => __awaiter(void 0, void 0, void 0, function* () { return yield iterator.getLine(); })).rejects.toThrowError();
+    yield expect(() => __awaiter(void 0, void 0, void 0, function* () { return yield iterator.isEmptyLine(); })).rejects.toThrowError();
+    yield reader.close();
+}));
+// ----------------------------------------------------------------------
 describe("SyncSmlStreamWriter Constructor", () => {
     test("Test", () => {
         deleteFileSync(testFilePath);

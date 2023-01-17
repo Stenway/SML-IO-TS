@@ -2,9 +2,9 @@
 import { ReliableTxtEncoding } from '@stenway/reliabletxt'
 import { ReliableTxtFile } from '@stenway/reliabletxt-io'
 import { SmlAttribute, SmlDocument, SmlElement, SmlEmptyNode } from '@stenway/sml'
-import { SyncWsvStreamReader } from '@stenway/wsv-io'
+import { SyncWsvStreamReader, WsvStreamReader } from '@stenway/wsv-io'
 import * as fs from 'fs'
-import { SmlFile, SmlStreamWriter, SyncSmlStreamReader, SyncSmlStreamWriter, SyncWsvStreamLineIterator } from '../src'
+import { SmlFile, SmlStreamReader, SmlStreamWriter, SyncSmlStreamReader, SyncSmlStreamWriter, SyncWsvStreamLineIterator, WsvStreamLineIterator } from '../src'
 
 function getFilePath(name: string): string {
 	return "test_files/"+name
@@ -246,6 +246,114 @@ test("SyncWsvStreamLineIterator", () => {
 	expect(() => iterator.getLine()).toThrowError()
 	expect(() => iterator.isEmptyLine()).toThrowError()
 	reader.close()
+})
+
+// ----------------------------------------------------------------------
+
+describe("SmlStreamReader Constructor", () => {
+	test.each([
+		["Root\nEnd", "End"],
+		["Root\nend", "end"],
+		["Root\n-", null],
+		["契約\nエンド", "エンド"],
+		["Root\nEnd  ", "End"],
+		["Root\n  End  \n", "End"],
+		["Root\n  End  \n  \n  ", "End"],
+	])(
+		"Given %p",
+		async (input, output) => {
+			await ReliableTxtFile.writeAllText(input, testFilePath, ReliableTxtEncoding.Utf8)
+			const reader = await SmlStreamReader.create(testFilePath)
+			expect(reader.encoding).toEqual(ReliableTxtEncoding.Utf8)
+			expect(reader.endKeyword).toEqual(output)
+			expect(reader.handle !== null).toEqual(true)
+			await reader.close()
+		}
+	)
+
+	test.each([
+		[ReliableTxtEncoding.Utf16],
+		[ReliableTxtEncoding.Utf16Reverse],
+		[ReliableTxtEncoding.Utf32],
+	])(
+		"Given %p throws",
+		async (encoding) => {
+			await ReliableTxtFile.writeAllText("Root\nEnd", testFilePath, encoding)
+			await expect(async () => await SmlStreamReader.create(testFilePath)).rejects.toThrowError()
+		}
+	)
+
+	test("Invalid end keyword", async () => {
+		await ReliableTxtFile.writeAllText("Root\nEnd End", testFilePath, ReliableTxtEncoding.Utf8)
+		await expect(async () => await SmlStreamReader.create(testFilePath)).rejects.toThrowError()
+	})
+
+	test("Chunk size", async () => {
+		await ReliableTxtFile.writeAllText("Root\nEnd", testFilePath, ReliableTxtEncoding.Utf8)
+		await expect(async () => await SmlStreamReader.create(testFilePath, true, 1)).rejects.toThrowError("Chunk size too small")
+	})
+})
+
+test("SmlStreamReader.isClosed", async () => {
+	await ReliableTxtFile.writeAllText("Root\nEnd", testFilePath, ReliableTxtEncoding.Utf8)
+	const writer = await SmlStreamReader.create(testFilePath)
+	expect(writer.isClosed).toEqual(false)
+	await writer.close()
+	expect(writer.isClosed).toEqual(true)
+})
+
+describe("SmlStreamReader.readLine", () => {
+	test("Null", async () => {
+		await ReliableTxtFile.writeAllText("Root\n\tAttribute1 10\n\tSub\n\tEnd\n\t#comment\nEnd", testFilePath)
+		const reader = await SmlStreamReader.create(testFilePath)
+		const line1 = await reader.readNode() as SmlAttribute
+		if (line1 === null) { throw Error() }
+		expect(line1.toString()).toEqual("\tAttribute1 10")
+		const line2 = await reader.readNode() as SmlElement
+		if (line2 === null) { throw Error() }
+		expect(line2.toString()).toEqual("\tSub\n\tEnd")
+		const line3 = await reader.readNode() as SmlEmptyNode
+		if (line3 === null) { throw Error() }
+		expect(line3.toString()).toEqual("\t#comment")
+		expect(await reader.readNode()).toEqual(null)
+		await reader.close()
+	})
+
+	test("Not preserving", async () => {
+		await ReliableTxtFile.writeAllText("Root\n\tAttribute1 10\n\tSub\n\tEnd\n\t#comment\nEnd", testFilePath)
+		const reader = await SmlStreamReader.create(testFilePath, false)
+		const line1 = await reader.readNode() as SmlAttribute
+		if (line1 === null) { throw Error() }
+		expect(line1.toString()).toEqual("Attribute1 10")
+		const line2 = await reader.readNode() as SmlElement
+		if (line2 === null) { throw Error() }
+		expect(line2.toString()).toEqual("Sub\nEnd")
+		expect(await reader.readNode()).toEqual(null)
+		await reader.close()
+	})
+
+	test("Closed", async () => {
+		await ReliableTxtFile.writeAllText("Root\nEnd", testFilePath)
+		const reader = await SmlStreamReader.create(testFilePath)
+		await reader.close()
+		await expect(async () => await reader.readNode()).rejects.toThrowError()
+	})
+})
+
+// ----------------------------------------------------------------------
+
+test("WsvStreamLineIterator", async () => {
+	await ReliableTxtFile.writeAllText("Root\nEnd", testFilePath)
+	const reader = await WsvStreamReader.create(testFilePath)
+	const iterator = await WsvStreamLineIterator.create(reader, "End")
+	expect(await iterator.getLineAsArray()).toEqual(["Root"])
+	expect(iterator.toString()).toEqual("(2): End")
+	expect(iterator.getLineIndex()).toEqual(1)
+	expect((await iterator.getLine()).toString()).toEqual("End")
+	expect(await iterator.hasLine()).toEqual(false)
+	await expect(async () => await iterator.getLine()).rejects.toThrowError()
+	await expect(async () => await iterator.isEmptyLine()).rejects.toThrowError()
+	await reader.close()
 })
 
 // ----------------------------------------------------------------------

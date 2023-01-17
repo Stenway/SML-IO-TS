@@ -3,8 +3,8 @@
 import * as fs from 'fs'
 import { ReliableTxtFile, ReliableTxtStreamWriter, ReverseLineIterator, SyncReliableTxtStreamWriter, SyncReverseLineIterator } from "@stenway/reliabletxt-io"
 import { ReliableTxtDocument, ReliableTxtEncoding } from "@stenway/reliabletxt"
-import { SmlDocument, SmlElement, SmlEmptyNode, SmlNode, SmlParser, SmlParserError, WsvLineIterator } from "@stenway/sml"
-import { SyncWsvStreamReader } from "@stenway/wsv-io"
+import { SmlDocument, SmlElement, SmlEmptyNode, SmlNode, SmlParser, SmlParserError, SyncWsvLineIterator, WsvLineIterator } from "@stenway/sml"
+import { SyncWsvStreamReader, WsvStreamReader } from "@stenway/wsv-io"
 import { WsvLine, WsvValue } from "@stenway/wsv"
 
 // ----------------------------------------------------------------------
@@ -57,7 +57,7 @@ export abstract class SmlFile {
 
 // ----------------------------------------------------------------------
 
-export class SyncWsvStreamLineIterator implements WsvLineIterator {
+export class SyncWsvStreamLineIterator implements SyncWsvLineIterator {
 	private reader: SyncWsvStreamReader
 	private currentLine: WsvLine | null
 	private endKeyword: string | null
@@ -109,6 +109,63 @@ export class SyncWsvStreamLineIterator implements WsvLineIterator {
 
 // ----------------------------------------------------------------------
 
+export class WsvStreamLineIterator implements WsvLineIterator {
+	private reader: WsvStreamReader
+	private currentLine: WsvLine | null
+	private endKeyword: string | null
+	private index: number = 0
+
+	private constructor(reader: WsvStreamReader, currentLine: WsvLine | null, endKeyword: string | null) {
+		this.reader = reader
+		this.currentLine = currentLine
+		this.endKeyword = endKeyword
+	}
+
+	static async create(reader: WsvStreamReader, endKeyword: string | null): Promise<WsvStreamLineIterator> {
+		const currentLine = await reader.readLine()
+		return new WsvStreamLineIterator(reader, currentLine, endKeyword)
+	}
+
+	getEndKeyword(): string | null {
+		return this.endKeyword
+	}
+
+	async hasLine(): Promise<boolean> {
+		return this.currentLine !== null
+	}
+
+	async isEmptyLine(): Promise<boolean> {
+		if (this.currentLine === null) { throw new Error(`Invalid state`) }
+		return (await this.hasLine()) && !this.currentLine.hasValues
+	}
+
+	async getLine(): Promise<WsvLine> {
+		if (this.currentLine === null) { throw new Error(`Invalid state`) }
+		const result: WsvLine = this.currentLine
+		this.currentLine = await this.reader.readLine()
+		this.index++
+		return result
+	}
+
+	async getLineAsArray(): Promise<(string | null)[]> {
+		return (await this.getLine()).values
+	}
+
+	toString(): string {
+		let result: string = "(" + (this.index+1) + "): "
+		if (this.currentLine !== null) {
+			result += this.currentLine.toString()
+		}
+		return result
+	}
+
+	getLineIndex(): number {
+		return this.index
+	}
+}
+
+// ----------------------------------------------------------------------
+
 export class SyncSmlStreamReader {
 	readonly root: SmlElement
 
@@ -141,7 +198,8 @@ export class SyncSmlStreamReader {
 			
 			this.iterator = new SyncWsvStreamLineIterator(this.reader, this.endKeyword)
 			
-			this.root = SmlParser.readRootElement(this.iterator, this.emptyNodesBefore)
+			this.root = SmlParser.readRootElementSync(this.iterator, this.emptyNodesBefore)
+			if (!preserveWhitespacesAndComments) { this.emptyNodesBefore = [] }
 		} catch (error) {
 			this.reader.close()
 			throw error
@@ -151,17 +209,86 @@ export class SyncSmlStreamReader {
 	readNode(): SmlNode | null {
 		if (!this.preserveWhitespacesAndComments) {
 			for (;;) {
-				const result = SmlParser.readNode(this.iterator, this.root)
+				const result = SmlParser.readNodeSync(this.iterator, this.root)
 				if (result instanceof SmlEmptyNode) { continue }
 				return result
 			}
 		} else {
-			return SmlParser.readNode(this.iterator, this.root)
+			return SmlParser.readNodeSync(this.iterator, this.root)
 		}
 	}
 
 	close() {
 		this.reader.close()
+	}
+}
+
+// ----------------------------------------------------------------------
+
+export class SmlStreamReader {
+	readonly root: SmlElement
+
+	private reader: WsvStreamReader
+	readonly endKeyword: string | null
+	private iterator: WsvStreamLineIterator
+	private preserveWhitespacesAndComments: boolean
+	
+	readonly emptyNodesBefore: SmlEmptyNode[]
+
+	get encoding(): ReliableTxtEncoding {
+		return this.reader.encoding
+	}
+
+	get isClosed(): boolean {
+		return this.reader.isClosed
+	}
+
+	get handle(): fs.promises.FileHandle | null {
+		return this.reader.handle
+	}
+
+	private constructor(reader: WsvStreamReader, root: SmlElement, endKeyword: string | null, iterator: WsvStreamLineIterator, preserveWhitespacesAndComments: boolean, emptyNodesBefore: SmlEmptyNode[]) {
+		this.reader = reader
+		this.root = root
+		this.endKeyword = endKeyword
+		this.iterator = iterator
+		this.preserveWhitespacesAndComments = preserveWhitespacesAndComments
+		if (!preserveWhitespacesAndComments) { emptyNodesBefore = [] }
+		this.emptyNodesBefore = emptyNodesBefore
+	}
+	
+	static async create(filePath: string, preserveWhitespacesAndComments: boolean = true, chunkSize: number = 4096): Promise<SmlStreamReader> {
+		const reader = await WsvStreamReader.create(filePath, preserveWhitespacesAndComments, chunkSize)
+		try {
+			// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+			const result = await SmlEndKeywordDetector.getEndKeywordAndPosition(reader.handle!, reader.encoding)
+			const endKeyword = result[0]
+			
+			const iterator = await WsvStreamLineIterator.create(reader, endKeyword)
+			
+			const emptyNodesBefore: SmlEmptyNode[] = []
+			const root = await SmlParser.readRootElement(iterator, emptyNodesBefore)
+			return new SmlStreamReader(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore)
+		} catch (error) {
+			reader.close()
+			throw error
+		}
+	}
+	
+	async readNode(): Promise<SmlNode | null> {
+		if (!this.preserveWhitespacesAndComments) {
+			for (;;) {
+				const result = await SmlParser.readNode(this.iterator, this.root)
+				if (result instanceof SmlEmptyNode) { continue }
+				return result
+			}
+		} else {
+			return await SmlParser.readNode(this.iterator, this.root)
+		}
+	}
+
+	async close() {
+		await this.reader.close()
 	}
 }
 
