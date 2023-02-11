@@ -1,6 +1,6 @@
 ﻿import { NoReliableTxtPreambleError } from '@stenway/reliabletxt'
 import { ReliableTxtEncoding } from '@stenway/reliabletxt'
-import { ReliableTxtFile } from '@stenway/reliabletxt-io'
+import { ReliableTxtFile, WriterMode } from '@stenway/reliabletxt-io'
 import { SmlAttribute, SmlDocument, SmlElement, SmlEmptyNode } from '@stenway/sml'
 import { SyncWsvStreamReader, WsvStreamReader } from '@stenway/wsv-io'
 import * as fs from 'fs'
@@ -155,10 +155,10 @@ describe("SyncSmlStreamReader Constructor", () => {
 		"Given %p",
 		(input, output) => {
 			ReliableTxtFile.writeAllTextSync(input, testFilePath, ReliableTxtEncoding.Utf8)
-			const reader = new SyncSmlStreamReader(testFilePath)
+			const reader = SyncSmlStreamReader.create(testFilePath)
 			expect(reader.encoding).toEqual(ReliableTxtEncoding.Utf8)
 			expect(reader.endKeyword).toEqual(output)
-			expect(reader.handle !== null).toEqual(true)
+			expect(reader.handle.encoding).toEqual(ReliableTxtEncoding.Utf8)
 			reader.close()
 		}
 	)
@@ -171,24 +171,24 @@ describe("SyncSmlStreamReader Constructor", () => {
 		"Given %p throws",
 		(encoding) => {
 			ReliableTxtFile.writeAllTextSync("Root\nEnd", testFilePath, encoding)
-			expect(() => new SyncSmlStreamReader(testFilePath)).toThrowError()
+			expect(() => SyncSmlStreamReader.create(testFilePath)).toThrowError()
 		}
 	)
 
 	test("Invalid end keyword", () => {
 		ReliableTxtFile.writeAllTextSync("Root\nEnd End", testFilePath, ReliableTxtEncoding.Utf8)
-		expect(() => new SyncSmlStreamReader(testFilePath)).toThrowError()
+		expect(() => SyncSmlStreamReader.create(testFilePath)).toThrowError()
 	})
 
 	test("Chunk size", () => {
 		ReliableTxtFile.writeAllTextSync("Root\nEnd", testFilePath, ReliableTxtEncoding.Utf8)
-		expect(() => new SyncSmlStreamReader(testFilePath, true, 1)).toThrowError("Chunk size too small")
+		expect(() => SyncSmlStreamReader.create(testFilePath, true, 1)).toThrowError("Chunk size too small")
 	})
 })
 
 test("SyncSmlStreamReader.isClosed", () => {
 	ReliableTxtFile.writeAllTextSync("Root\nEnd", testFilePath, ReliableTxtEncoding.Utf8)
-	const writer = new SyncSmlStreamReader(testFilePath)
+	const writer = SyncSmlStreamReader.create(testFilePath)
 	expect(writer.isClosed).toEqual(false)
 	writer.close()
 	expect(writer.isClosed).toEqual(true)
@@ -197,7 +197,7 @@ test("SyncSmlStreamReader.isClosed", () => {
 describe("SyncSmlStreamReader.readLine", () => {
 	test("Null", () => {
 		ReliableTxtFile.writeAllTextSync("Root\n\tAttribute1 10\n\tSub\n\tEnd\n\t#comment\nEnd", testFilePath)
-		const reader = new SyncSmlStreamReader(testFilePath)
+		const reader = SyncSmlStreamReader.create(testFilePath)
 		const line1 = reader.readNode() as SmlAttribute
 		if (line1 === null) { throw Error() }
 		expect(line1.toString()).toEqual("\tAttribute1 10")
@@ -208,12 +208,13 @@ describe("SyncSmlStreamReader.readLine", () => {
 		if (line3 === null) { throw Error() }
 		expect(line3.toString()).toEqual("\t#comment")
 		expect(reader.readNode()).toEqual(null)
+		expect(reader.readNode()).toEqual(null)
 		reader.close()
 	})
 
 	test("Not preserving", () => {
 		ReliableTxtFile.writeAllTextSync("Root\n\tAttribute1 10\n\tSub\n\tEnd\n\t#comment\nEnd", testFilePath)
-		const reader = new SyncSmlStreamReader(testFilePath, false)
+		const reader = SyncSmlStreamReader.create(testFilePath, false)
 		const line1 = reader.readNode() as SmlAttribute
 		if (line1 === null) { throw Error() }
 		expect(line1.toString()).toEqual("Attribute1 10")
@@ -226,7 +227,7 @@ describe("SyncSmlStreamReader.readLine", () => {
 
 	test("Closed", () => {
 		ReliableTxtFile.writeAllTextSync("Root\nEnd", testFilePath)
-		const reader = new SyncSmlStreamReader(testFilePath)
+		const reader = SyncSmlStreamReader.create(testFilePath)
 		reader.close()
 		expect(() => reader.readNode()).toThrowError()
 	})
@@ -236,8 +237,8 @@ describe("SyncSmlStreamReader.readLine", () => {
 
 test("SyncWsvStreamLineIterator", () => {
 	ReliableTxtFile.writeAllTextSync("Root\nEnd", testFilePath)
-	const reader = new SyncWsvStreamReader(testFilePath)
-	const iterator = new SyncWsvStreamLineIterator(reader, "End")
+	const reader = SyncWsvStreamReader.create(testFilePath)
+	const iterator = SyncWsvStreamLineIterator.create(reader, "End")
 	expect(iterator.getLineAsArray()).toEqual(["Root"])
 	expect(iterator.toString()).toEqual("(2): End")
 	expect(iterator.getLineIndex()).toEqual(1)
@@ -266,7 +267,7 @@ describe("SmlStreamReader Constructor", () => {
 			const reader = await SmlStreamReader.create(testFilePath)
 			expect(reader.encoding).toEqual(ReliableTxtEncoding.Utf8)
 			expect(reader.endKeyword).toEqual(output)
-			expect(reader.handle !== null).toEqual(true)
+			expect(reader.handle.encoding).toEqual(ReliableTxtEncoding.Utf8)
 			await reader.close()
 		}
 	)
@@ -316,6 +317,7 @@ describe("SmlStreamReader.readLine", () => {
 		if (line3 === null) { throw Error() }
 		expect(line3.toString()).toEqual("\t#comment")
 		expect(await reader.readNode()).toEqual(null)
+		expect(await reader.readNode()).toEqual(null)
 		await reader.close()
 	})
 
@@ -362,30 +364,29 @@ describe("SyncSmlStreamWriter Constructor", () => {
 	test("Test", () => {
 		deleteFileSync(testFilePath)
 		const template = new SmlDocument(new SmlElement("Root"))
-		const writer = new SyncSmlStreamWriter(template, testFilePath)
-		expect(writer.isAppendMode).toEqual(false)
+		const writer = SyncSmlStreamWriter.create(template, testFilePath)
+		expect(writer.existing).toEqual(false)
 		expect(writer.isClosed).toEqual(false)
 		expect(writer.handle !== null).toEqual(true)
 		expect(writer.encoding).toEqual(ReliableTxtEncoding.Utf8)
 		writer.writeNode(new SmlAttribute("Attribute1"))
 		writer.close()
 		expect(writer.isClosed).toEqual(true)
-		expect(writer.handle === null).toEqual(true)
 		const loaded = ReliableTxtFile.loadSync(testFilePath)
 		expect(loaded.text).toEqual("Root\n\tAttribute1 -\nEnd")
 		expect(loaded.encoding).toEqual(ReliableTxtEncoding.Utf8)
 
 		const template2 = new SmlDocument(new SmlElement("Root2"))
-		const writer2 = new SyncSmlStreamWriter(template2, testFilePath)
-		expect(writer2.isAppendMode).toEqual(false)
+		const writer2 = SyncSmlStreamWriter.create(template2, testFilePath)
+		expect(writer2.existing).toEqual(false)
 		writer2.writeNode(new SmlAttribute("Attribute1"))
 		writer2.close()
 		const loaded2 = ReliableTxtFile.loadSync(testFilePath)
 		expect(loaded2.text).toEqual("Root2\n\tAttribute1 -\nEnd")
 		expect(loaded2.encoding).toEqual(ReliableTxtEncoding.Utf8)
 
-		const writer3 = new SyncSmlStreamWriter(template2, testFilePath, true, true)
-		expect(writer3.isAppendMode).toEqual(true)
+		const writer3 = SyncSmlStreamWriter.create(template2, testFilePath, WriterMode.CreateOrAppend, true)
+		expect(writer3.existing).toEqual(true)
 		writer3.writeNode(new SmlAttribute("Attribute2"))
 		writer3.close()
 		const loaded3 = ReliableTxtFile.loadSync(testFilePath)
@@ -393,8 +394,8 @@ describe("SyncSmlStreamWriter Constructor", () => {
 		expect(loaded3.encoding).toEqual(ReliableTxtEncoding.Utf8)
 
 		deleteFileSync(testFilePath)
-		const writer4 = new SyncSmlStreamWriter(template, testFilePath, true, true)
-		expect(writer4.isAppendMode).toEqual(false)
+		const writer4 = SyncSmlStreamWriter.create(template, testFilePath, WriterMode.CreateOrAppend, true)
+		expect(writer4.existing).toEqual(false)
 		writer4.close()
 		const loaded4 = ReliableTxtFile.loadSync(testFilePath)
 		expect(loaded4.text).toEqual("Root\nEnd")
@@ -404,8 +405,24 @@ describe("SyncSmlStreamWriter Constructor", () => {
 	test("Invalid end keyword", () => {
 		ReliableTxtFile.writeAllTextSync("Root\nEnd End", testFilePath, ReliableTxtEncoding.Utf8)
 		const template = new SmlDocument(new SmlElement("Root"))
-		expect(() => new SyncSmlStreamWriter(template, testFilePath, true, true)).toThrowError()
+		expect(() => SyncSmlStreamWriter.create(template, testFilePath, WriterMode.CreateOrAppend, true)).toThrowError()
 	})
+})
+
+test("SyncSmlStreamWriter append reader", () => {
+	ReliableTxtFile.writeAllTextSync("Root\n\tAttribute 1\nEnd", testFilePath)
+	const template = new SmlDocument(new SmlElement("Root"))
+	let writer = SyncSmlStreamWriter.create(template, testFilePath, WriterMode.CreateOrAppend)
+	expect(writer.existing).toEqual(true)
+	const reader = SyncSmlStreamReader.getAppendReader(writer)
+	const node1 = reader.readNode()
+	expect(node1?.isAttribute()).toEqual(true)
+	expect(reader.readNode()).toEqual(null)
+	writer.close()
+
+	writer = SyncSmlStreamWriter.create(template, testFilePath)
+	expect(() => SyncSmlStreamReader.getAppendReader(writer)).toThrowError()
+	writer.close()
 })
 
 // ----------------------------------------------------------------------
@@ -415,29 +432,28 @@ describe("SmlStreamWriter Constructor", () => {
 		await deleteFile(testFilePath)
 		const template = new SmlDocument(new SmlElement("Root"))
 		const writer = await SmlStreamWriter.create(template, testFilePath)
-		expect(writer.isAppendMode).toEqual(false)
+		expect(writer.existing).toEqual(false)
 		expect(writer.isClosed).toEqual(false)
 		expect(writer.handle !== null).toEqual(true)
 		expect(writer.encoding).toEqual(ReliableTxtEncoding.Utf8)
 		await writer.writeNode(new SmlAttribute("Attribute1"))
 		await writer.close()
 		expect(writer.isClosed).toEqual(true)
-		expect(writer.handle === null).toEqual(true)
 		const loaded = await ReliableTxtFile.load(testFilePath)
 		expect(loaded.text).toEqual("Root\n\tAttribute1 -\nEnd")
 		expect(loaded.encoding).toEqual(ReliableTxtEncoding.Utf8)
 
 		const template2 = new SmlDocument(new SmlElement("Root2"))
 		const writer2 = await SmlStreamWriter.create(template2, testFilePath)
-		expect(writer2.isAppendMode).toEqual(false)
+		expect(writer2.existing).toEqual(false)
 		await writer2.writeNode(new SmlAttribute("Attribute1"))
 		await writer2.close()
 		const loaded2 = await ReliableTxtFile.load(testFilePath)
 		expect(loaded2.text).toEqual("Root2\n\tAttribute1 -\nEnd")
 		expect(loaded2.encoding).toEqual(ReliableTxtEncoding.Utf8)
 
-		const writer3 = await SmlStreamWriter.create(template2, testFilePath, true, true)
-		expect(writer3.isAppendMode).toEqual(true)
+		const writer3 = await SmlStreamWriter.create(template2, testFilePath, WriterMode.CreateOrAppend, true)
+		expect(writer3.existing).toEqual(true)
 		await writer3.writeNode(new SmlAttribute("Attribute2"))
 		await writer3.close()
 		const loaded3 = await ReliableTxtFile.load(testFilePath)
@@ -445,8 +461,8 @@ describe("SmlStreamWriter Constructor", () => {
 		expect(loaded3.encoding).toEqual(ReliableTxtEncoding.Utf8)
 
 		await deleteFile(testFilePath)
-		const writer4 = await SmlStreamWriter.create(template, testFilePath, true, true)
-		expect(writer4.isAppendMode).toEqual(false)
+		const writer4 = await SmlStreamWriter.create(template, testFilePath, WriterMode.CreateOrAppend, true)
+		expect(writer4.existing).toEqual(false)
 		await writer4.close()
 		const loaded4 = await ReliableTxtFile.load(testFilePath)
 		expect(loaded4.text).toEqual("Root\nEnd")
@@ -456,6 +472,22 @@ describe("SmlStreamWriter Constructor", () => {
 	test("Invalid end keyword", async () => {
 		await ReliableTxtFile.writeAllText("Root\nEnd End", testFilePath, ReliableTxtEncoding.Utf8)
 		const template = new SmlDocument(new SmlElement("Root"))
-		await expect(async () => await SmlStreamWriter.create(template, testFilePath, true, true)).rejects.toThrowError()
+		await expect(async () => await SmlStreamWriter.create(template, testFilePath, WriterMode.CreateOrAppend, true)).rejects.toThrowError()
 	})
+})
+
+test("SmlStreamWriter append reader", async () => {
+	await ReliableTxtFile.writeAllText("Root\n\tAttribute 1\nEnd", testFilePath)
+	const template = new SmlDocument(new SmlElement("Root"))
+	let writer = await SmlStreamWriter.create(template, testFilePath, WriterMode.CreateOrAppend)
+	expect(writer.existing).toEqual(true)
+	const reader = await SmlStreamReader.getAppendReader(writer)
+	const node1 = await reader.readNode()
+	expect(node1?.isAttribute()).toEqual(true)
+	expect(await reader.readNode()).toEqual(null)
+	await writer.close()
+
+	writer = await SmlStreamWriter.create(template, testFilePath)
+	await expect(async () => await SmlStreamReader.getAppendReader(writer)).rejects.toThrowError()
+	await writer.close()
 })

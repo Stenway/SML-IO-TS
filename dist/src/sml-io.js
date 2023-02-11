@@ -41,11 +41,9 @@ class SmlFile {
         if (nodes.length === 0) {
             return;
         }
-        const writer = new SyncSmlStreamWriter(templateDocument, filePath, preserveWhitespacesAndComments, true);
+        const writer = SyncSmlStreamWriter.create(templateDocument, filePath, reliabletxt_io_1.WriterMode.CreateOrAppend, preserveWhitespacesAndComments);
         try {
-            for (const node of nodes) {
-                writer.writeNode(node);
-            }
+            writer.writeNodes(nodes);
         }
         finally {
             writer.close();
@@ -56,11 +54,9 @@ class SmlFile {
             if (nodes.length === 0) {
                 return;
             }
-            const writer = yield SmlStreamWriter.create(templateDocument, filePath, preserveWhitespacesAndComments, true);
+            const writer = yield SmlStreamWriter.create(templateDocument, filePath, reliabletxt_io_1.WriterMode.CreateOrAppend, preserveWhitespacesAndComments);
             try {
-                for (const node of nodes) {
-                    yield writer.writeNode(node);
-                }
+                yield writer.writeNodes(nodes);
             }
             finally {
                 yield writer.close();
@@ -71,11 +67,15 @@ class SmlFile {
 exports.SmlFile = SmlFile;
 // ----------------------------------------------------------------------
 class SyncWsvStreamLineIterator {
-    constructor(reader, endKeyword) {
+    constructor(reader, currentLine, endKeyword) {
         this.index = 0;
         this.reader = reader;
+        this.currentLine = currentLine;
         this.endKeyword = endKeyword;
-        this.currentLine = reader.readLine();
+    }
+    static create(reader, endKeyword) {
+        const currentLine = reader.readLine();
+        return new SyncWsvStreamLineIterator(reader, currentLine, endKeyword);
     }
     getEndKeyword() {
         return this.endKeyword;
@@ -173,24 +173,19 @@ class WsvStreamLineIterator {
 exports.WsvStreamLineIterator = WsvStreamLineIterator;
 // ----------------------------------------------------------------------
 class SyncSmlStreamReader {
-    constructor(filePath, preserveWhitespacesAndComments = true, chunkSize = 4096) {
+    constructor(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore, isAppendReader) {
+        this.endReached = false;
         this.emptyNodesBefore = [];
-        this.reader = new wsv_io_1.SyncWsvStreamReader(filePath, preserveWhitespacesAndComments, chunkSize);
-        try {
-            this.preserveWhitespacesAndComments = preserveWhitespacesAndComments;
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            const result = SmlEndKeywordDetector.getEndKeywordAndPositionSync(this.reader.handle, this.encoding);
-            this.endKeyword = result[0];
-            this.iterator = new SyncWsvStreamLineIterator(this.reader, this.endKeyword);
-            this.root = sml_1.SmlParser.readRootElementSync(this.iterator, this.emptyNodesBefore);
-            if (!preserveWhitespacesAndComments) {
-                this.emptyNodesBefore = [];
-            }
+        this.reader = reader;
+        this.root = root;
+        this.endKeyword = endKeyword;
+        this.iterator = iterator;
+        this.preserveWhitespacesAndComments = preserveWhitespacesAndComments;
+        if (!preserveWhitespacesAndComments) {
+            emptyNodesBefore = [];
         }
-        catch (error) {
-            this.reader.close();
-            throw error;
-        }
+        this.emptyNodesBefore = emptyNodesBefore;
+        this.isAppendReader = isAppendReader;
     }
     get encoding() {
         return this.reader.encoding;
@@ -201,19 +196,52 @@ class SyncSmlStreamReader {
     get handle() {
         return this.reader.handle;
     }
+    static create(filePath, preserveWhitespacesAndComments = true, chunkSize = 4096) {
+        const reader = wsv_io_1.SyncWsvStreamReader.create(filePath, preserveWhitespacesAndComments, chunkSize);
+        try {
+            const result = SmlEndKeywordDetector.getEndKeywordAndPositionSync(reader.handle);
+            const endKeyword = result[0];
+            const iterator = SyncWsvStreamLineIterator.create(reader, endKeyword);
+            const emptyNodesBefore = [];
+            const root = sml_1.SmlParser.readRootElementSync(iterator, emptyNodesBefore);
+            return new SyncSmlStreamReader(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore, false);
+        }
+        catch (error) {
+            reader.close();
+            throw error;
+        }
+    }
+    static getAppendReader(writer, preserveWhitespacesAndComments = true, chunkSize = 4096) {
+        if (!writer.existing) {
+            throw new Error(`Writer is not in append mode`);
+        }
+        const reader = wsv_io_1.SyncWsvStreamReader.getAppendReader(writer.handle, preserveWhitespacesAndComments, chunkSize);
+        const iterator = SyncWsvStreamLineIterator.create(reader, writer.endKeyword);
+        const emptyNodesBefore = [];
+        const root = sml_1.SmlParser.readRootElementSync(iterator, emptyNodesBefore);
+        return new SyncSmlStreamReader(reader, root, writer.endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore, true);
+    }
     readNode() {
+        if (this.endReached || (this.isAppendReader && this.iterator.hasLine() === false)) {
+            return null;
+        }
+        let result = null;
         if (!this.preserveWhitespacesAndComments) {
             for (;;) {
-                const result = sml_1.SmlParser.readNodeSync(this.iterator, this.root);
+                result = sml_1.SmlParser.readNodeSync(this.iterator, this.root);
                 if (result instanceof sml_1.SmlEmptyNode) {
                     continue;
                 }
-                return result;
+                break;
             }
         }
         else {
-            return sml_1.SmlParser.readNodeSync(this.iterator, this.root);
+            result = sml_1.SmlParser.readNodeSync(this.iterator, this.root);
         }
+        if (result === null) {
+            this.endReached = true;
+        }
+        return result;
     }
     close() {
         this.reader.close();
@@ -222,7 +250,8 @@ class SyncSmlStreamReader {
 exports.SyncSmlStreamReader = SyncSmlStreamReader;
 // ----------------------------------------------------------------------
 class SmlStreamReader {
-    constructor(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore) {
+    constructor(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore, isAppendReader) {
+        this.endReached = false;
         this.reader = reader;
         this.root = root;
         this.endKeyword = endKeyword;
@@ -232,6 +261,7 @@ class SmlStreamReader {
             emptyNodesBefore = [];
         }
         this.emptyNodesBefore = emptyNodesBefore;
+        this.isAppendReader = isAppendReader;
     }
     get encoding() {
         return this.reader.encoding;
@@ -246,34 +276,53 @@ class SmlStreamReader {
         return __awaiter(this, void 0, void 0, function* () {
             const reader = yield wsv_io_1.WsvStreamReader.create(filePath, preserveWhitespacesAndComments, chunkSize);
             try {
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                const result = yield SmlEndKeywordDetector.getEndKeywordAndPosition(reader.handle, reader.encoding);
+                const result = yield SmlEndKeywordDetector.getEndKeywordAndPosition(reader.handle);
                 const endKeyword = result[0];
                 const iterator = yield WsvStreamLineIterator.create(reader, endKeyword);
                 const emptyNodesBefore = [];
                 const root = yield sml_1.SmlParser.readRootElement(iterator, emptyNodesBefore);
-                return new SmlStreamReader(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore);
+                return new SmlStreamReader(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore, false);
             }
             catch (error) {
-                reader.close();
+                yield reader.close();
                 throw error;
             }
         });
     }
+    static getAppendReader(writer, preserveWhitespacesAndComments = true, chunkSize = 4096) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!writer.existing) {
+                throw new Error(`Writer is not in append mode`);
+            }
+            const reader = wsv_io_1.WsvStreamReader.getAppendReader(writer.handle, preserveWhitespacesAndComments, chunkSize);
+            const iterator = yield WsvStreamLineIterator.create(reader, writer.endKeyword);
+            const emptyNodesBefore = [];
+            const root = yield sml_1.SmlParser.readRootElement(iterator, emptyNodesBefore);
+            return new SmlStreamReader(reader, root, writer.endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore, true);
+        });
+    }
     readNode() {
         return __awaiter(this, void 0, void 0, function* () {
+            if (this.endReached || (this.isAppendReader && (yield this.iterator.hasLine()) === false)) {
+                return null;
+            }
+            let result = null;
             if (!this.preserveWhitespacesAndComments) {
                 for (;;) {
-                    const result = yield sml_1.SmlParser.readNode(this.iterator, this.root);
+                    result = yield sml_1.SmlParser.readNode(this.iterator, this.root);
                     if (result instanceof sml_1.SmlEmptyNode) {
                         continue;
                     }
-                    return result;
+                    break;
                 }
             }
             else {
-                return yield sml_1.SmlParser.readNode(this.iterator, this.root);
+                result = yield sml_1.SmlParser.readNode(this.iterator, this.root);
             }
+            if (result === null) {
+                this.endReached = true;
+            }
+            return result;
         });
     }
     close() {
@@ -285,10 +334,10 @@ class SmlStreamReader {
 exports.SmlStreamReader = SmlStreamReader;
 // ----------------------------------------------------------------------
 class SmlEndKeywordDetector {
-    static getEndKeywordAndPositionSync(handle, encoding) {
+    static getEndKeywordAndPositionSync(handle) {
         try {
             let endKeyword;
-            const iterator = new reliabletxt_io_1.SyncReverseLineIterator(handle, encoding);
+            const iterator = reliabletxt_io_1.SyncReverseLineIterator.create(handle);
             for (;;) {
                 const lineStr = iterator.getLine();
                 const line = wsv_1.WsvLine.parse(lineStr);
@@ -307,11 +356,11 @@ class SmlEndKeywordDetector {
             throw new Error(`Could not detect end keyword: ${error}`);
         }
     }
-    static getEndKeywordAndPosition(handle, encoding) {
+    static getEndKeywordAndPosition(handle) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
                 let endKeyword;
-                const iterator = yield reliabletxt_io_1.ReverseLineIterator.create(handle, encoding);
+                const iterator = yield reliabletxt_io_1.ReverseLineIterator.create(handle);
                 for (;;) {
                     const lineStr = yield iterator.getLine();
                     const line = wsv_1.WsvLine.parse(lineStr);
@@ -334,29 +383,11 @@ class SmlEndKeywordDetector {
 }
 // ----------------------------------------------------------------------
 class SyncSmlStreamWriter {
-    constructor(templateDocument, filePath, preserveWhitespacesAndComment = true, append = false) {
-        this.writer = new reliabletxt_io_1.SyncReliableTxtStreamWriter(filePath, templateDocument.encoding, append);
-        try {
-            this.preserveWhitespacesAndComments = preserveWhitespacesAndComment;
-            this.defaultIndentation = templateDocument.defaultIndentation;
-            if (this.writer.isAppendMode) {
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                const handle = this.writer.handle;
-                const result = SmlEndKeywordDetector.getEndKeywordAndPositionSync(handle, this.encoding);
-                this.endKeyword = result[0];
-                const restLength = result[1];
-                this.writer.internalTruncate(restLength);
-            }
-            else {
-                this.endKeyword = templateDocument.endKeyword;
-                const rootElementName = templateDocument.root.name;
-                this.writer.writeLine(wsv_1.WsvValue.serialize(rootElementName));
-            }
-        }
-        catch (error) {
-            this.writer.close();
-            throw error;
-        }
+    constructor(writer, defaultIndentation, preserveWhitespacesAndComment, endKeyword) {
+        this.writer = writer;
+        this.defaultIndentation = defaultIndentation;
+        this.preserveWhitespacesAndComments = preserveWhitespacesAndComment;
+        this.endKeyword = endKeyword;
     }
     get encoding() {
         return this.writer.encoding;
@@ -367,13 +398,40 @@ class SyncSmlStreamWriter {
     get handle() {
         return this.writer.handle;
     }
-    get isAppendMode() {
-        return this.writer.isAppendMode;
+    get existing() {
+        return this.writer.existing;
+    }
+    static create(templateDocument, filePath, mode = reliabletxt_io_1.WriterMode.CreateOrOverwrite, preserveWhitespacesAndComment = true) {
+        const writer = reliabletxt_io_1.SyncReliableTxtStreamWriter.create(filePath, templateDocument.encoding, mode);
+        let endKeyword;
+        try {
+            if (writer.existing) {
+                const result = SmlEndKeywordDetector.getEndKeywordAndPositionSync(writer.handle);
+                endKeyword = result[0];
+                const restLength = result[1];
+                writer.internalTruncate(restLength);
+            }
+            else {
+                endKeyword = templateDocument.endKeyword;
+                const rootElementName = templateDocument.root.name;
+                writer.writeLine(wsv_1.WsvValue.serialize(rootElementName));
+            }
+        }
+        catch (error) {
+            writer.close();
+            throw error;
+        }
+        return new SyncSmlStreamWriter(writer, templateDocument.defaultIndentation, preserveWhitespacesAndComment, endKeyword);
     }
     writeNode(node) {
         const lines = [];
         node.internalSerialize(lines, 1, this.defaultIndentation, this.endKeyword, this.preserveWhitespacesAndComments);
         this.writer.writeLines(lines);
+    }
+    writeNodes(nodes) {
+        for (const node of nodes) {
+            this.writeNode(node);
+        }
     }
     close() {
         if (!this.writer.isClosed) {
@@ -400,18 +458,16 @@ class SmlStreamWriter {
     get handle() {
         return this.writer.handle;
     }
-    get isAppendMode() {
-        return this.writer.isAppendMode;
+    get existing() {
+        return this.writer.existing;
     }
-    static create(templateDocument, filePath, preserveWhitespacesAndComment = true, append = false) {
+    static create(templateDocument, filePath, mode = reliabletxt_io_1.WriterMode.CreateOrOverwrite, preserveWhitespacesAndComment = true) {
         return __awaiter(this, void 0, void 0, function* () {
-            const writer = yield reliabletxt_io_1.ReliableTxtStreamWriter.create(filePath, templateDocument.encoding, append);
+            const writer = yield reliabletxt_io_1.ReliableTxtStreamWriter.create(filePath, templateDocument.encoding, mode);
             let endKeyword;
             try {
-                if (writer.isAppendMode) {
-                    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                    const handle = writer.handle;
-                    const result = yield SmlEndKeywordDetector.getEndKeywordAndPosition(handle, writer.encoding);
+                if (writer.existing) {
+                    const result = yield SmlEndKeywordDetector.getEndKeywordAndPosition(writer.handle);
                     endKeyword = result[0];
                     const restLength = result[1];
                     yield writer.internalTruncate(restLength);
@@ -434,6 +490,13 @@ class SmlStreamWriter {
             const lines = [];
             node.internalSerialize(lines, 1, this.defaultIndentation, this.endKeyword, this.preserveWhitespacesAndComments);
             yield this.writer.writeLines(lines);
+        });
+    }
+    writeNodes(nodes) {
+        return __awaiter(this, void 0, void 0, function* () {
+            for (const node of nodes) {
+                yield this.writeNode(node);
+            }
         });
     }
     close() {

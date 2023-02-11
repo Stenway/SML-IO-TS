@@ -1,7 +1,6 @@
 ﻿/* (C) Stefan John / Stenway / SimpleML.com / 2023 */
 
-import * as fs from 'fs'
-import { ReliableTxtFile, ReliableTxtStreamWriter, ReverseLineIterator, SyncReliableTxtStreamWriter, SyncReverseLineIterator } from "@stenway/reliabletxt-io"
+import { ReliableTxtFile, ReliableTxtFileHandle, ReliableTxtStreamWriter, ReverseLineIterator, SyncReliableTxtFileHandle, SyncReliableTxtStreamWriter, SyncReverseLineIterator, WriterMode } from "@stenway/reliabletxt-io"
 import { ReliableTxtDocument, ReliableTxtEncoding } from "@stenway/reliabletxt"
 import { SmlDocument, SmlElement, SmlEmptyNode, SmlNode, SmlParser, SmlParserError, SyncWsvLineIterator, WsvLineIterator } from "@stenway/sml"
 import { SyncWsvStreamReader, WsvStreamReader } from "@stenway/wsv-io"
@@ -32,11 +31,9 @@ export abstract class SmlFile {
 
 	static appendNodesSync(nodes: SmlNode[], templateDocument: SmlDocument, filePath: string, preserveWhitespacesAndComments: boolean = true) {
 		if (nodes.length === 0) { return }
-		const writer = new SyncSmlStreamWriter(templateDocument, filePath, preserveWhitespacesAndComments, true)
+		const writer = SyncSmlStreamWriter.create(templateDocument, filePath, WriterMode.CreateOrAppend, preserveWhitespacesAndComments)
 		try {
-			for (const node of nodes) {
-				writer.writeNode(node)
-			}
+			writer.writeNodes(nodes)
 		} finally {
 			writer.close()
 		}
@@ -44,11 +41,9 @@ export abstract class SmlFile {
 
 	static async appendNodes(nodes: SmlNode[], templateDocument: SmlDocument, filePath: string, preserveWhitespacesAndComments: boolean = true) {
 		if (nodes.length === 0) { return }
-		const writer = await SmlStreamWriter.create(templateDocument, filePath, preserveWhitespacesAndComments, true)
+		const writer = await SmlStreamWriter.create(templateDocument, filePath, WriterMode.CreateOrAppend, preserveWhitespacesAndComments)
 		try {
-			for (const node of nodes) {
-				await writer.writeNode(node)
-			}
+			await writer.writeNodes(nodes)
 		} finally {
 			await writer.close()
 		}
@@ -63,10 +58,15 @@ export class SyncWsvStreamLineIterator implements SyncWsvLineIterator {
 	private endKeyword: string | null
 	private index: number = 0
 
-	constructor(reader: SyncWsvStreamReader, endKeyword: string | null) {
+	private constructor(reader: SyncWsvStreamReader, currentLine: WsvLine | null, endKeyword: string | null) {
 		this.reader = reader
+		this.currentLine = currentLine
 		this.endKeyword = endKeyword
-		this.currentLine = reader.readLine()
+	}
+
+	static create(reader: SyncWsvStreamReader, endKeyword: string | null): SyncWsvStreamLineIterator {
+		const currentLine = reader.readLine()
+		return new SyncWsvStreamLineIterator(reader, currentLine, endKeyword)
 	}
 
 	getEndKeyword(): string | null {
@@ -170,9 +170,11 @@ export class SyncSmlStreamReader {
 	readonly root: SmlElement
 
 	private reader: SyncWsvStreamReader
+	private endReached: boolean = false
 	readonly endKeyword: string | null
 	private iterator: SyncWsvStreamLineIterator
 	private preserveWhitespacesAndComments: boolean
+	private isAppendReader: boolean
 	
 	readonly emptyNodesBefore: SmlEmptyNode[] = []
 
@@ -184,38 +186,62 @@ export class SyncSmlStreamReader {
 		return this.reader.isClosed
 	}
 
-	get handle(): number | null {
+	get handle(): SyncReliableTxtFileHandle {
 		return this.reader.handle
 	}
 	
-	constructor(filePath: string, preserveWhitespacesAndComments: boolean = true, chunkSize: number = 4096) {
-		this.reader = new SyncWsvStreamReader(filePath, preserveWhitespacesAndComments, chunkSize)
+	private constructor(reader: SyncWsvStreamReader, root: SmlElement, endKeyword: string | null, iterator: SyncWsvStreamLineIterator, preserveWhitespacesAndComments: boolean, emptyNodesBefore: SmlEmptyNode[], isAppendReader: boolean) {
+		this.reader = reader
+		this.root = root
+		this.endKeyword = endKeyword
+		this.iterator = iterator
+		this.preserveWhitespacesAndComments = preserveWhitespacesAndComments
+		if (!preserveWhitespacesAndComments) { emptyNodesBefore = [] }
+		this.emptyNodesBefore = emptyNodesBefore
+		this.isAppendReader = isAppendReader
+	}
+	
+	static create(filePath: string, preserveWhitespacesAndComments: boolean = true, chunkSize: number = 4096): SyncSmlStreamReader {
+		const reader = SyncWsvStreamReader.create(filePath, preserveWhitespacesAndComments, chunkSize)
 		try {
-			this.preserveWhitespacesAndComments = preserveWhitespacesAndComments
-			// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-			const result = SmlEndKeywordDetector.getEndKeywordAndPositionSync(this.reader.handle!, this.encoding)
-			this.endKeyword = result[0]
+			const result = SmlEndKeywordDetector.getEndKeywordAndPositionSync(reader.handle)
+			const endKeyword = result[0]
 			
-			this.iterator = new SyncWsvStreamLineIterator(this.reader, this.endKeyword)
+			const iterator = SyncWsvStreamLineIterator.create(reader, endKeyword)
 			
-			this.root = SmlParser.readRootElementSync(this.iterator, this.emptyNodesBefore)
-			if (!preserveWhitespacesAndComments) { this.emptyNodesBefore = [] }
+			const emptyNodesBefore: SmlEmptyNode[] = []
+			const root = SmlParser.readRootElementSync(iterator, emptyNodesBefore)
+			return new SyncSmlStreamReader(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore, false)
 		} catch (error) {
-			this.reader.close()
+			reader.close()
 			throw error
 		}
 	}
+
+	static getAppendReader(writer: SyncSmlStreamWriter, preserveWhitespacesAndComments: boolean = true, chunkSize: number = 4096): SyncSmlStreamReader {
+		if (!writer.existing) { throw new Error(`Writer is not in append mode`) }
+		const reader = SyncWsvStreamReader.getAppendReader(writer.handle, preserveWhitespacesAndComments, chunkSize)
+		const iterator = SyncWsvStreamLineIterator.create(reader, writer.endKeyword)
+			
+		const emptyNodesBefore: SmlEmptyNode[] = []
+		const root = SmlParser.readRootElementSync(iterator, emptyNodesBefore)
+		return new SyncSmlStreamReader(reader, root, writer.endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore, true)
+	}
 	
 	readNode(): SmlNode | null {
+		if (this.endReached || (this.isAppendReader && this.iterator.hasLine() === false)) { return null }
+		let result: SmlNode | null = null
 		if (!this.preserveWhitespacesAndComments) {
 			for (;;) {
-				const result = SmlParser.readNodeSync(this.iterator, this.root)
+				result = SmlParser.readNodeSync(this.iterator, this.root)
 				if (result instanceof SmlEmptyNode) { continue }
-				return result
+				break
 			}
 		} else {
-			return SmlParser.readNodeSync(this.iterator, this.root)
+			result = SmlParser.readNodeSync(this.iterator, this.root)
 		}
+		if (result === null) { this.endReached = true }
+		return result
 	}
 
 	close() {
@@ -229,9 +255,11 @@ export class SmlStreamReader {
 	readonly root: SmlElement
 
 	private reader: WsvStreamReader
+	private endReached: boolean = false
 	readonly endKeyword: string | null
 	private iterator: WsvStreamLineIterator
 	private preserveWhitespacesAndComments: boolean
+	private isAppendReader: boolean
 	
 	readonly emptyNodesBefore: SmlEmptyNode[]
 
@@ -243,11 +271,11 @@ export class SmlStreamReader {
 		return this.reader.isClosed
 	}
 
-	get handle(): fs.promises.FileHandle | null {
+	get handle(): ReliableTxtFileHandle {
 		return this.reader.handle
 	}
 
-	private constructor(reader: WsvStreamReader, root: SmlElement, endKeyword: string | null, iterator: WsvStreamLineIterator, preserveWhitespacesAndComments: boolean, emptyNodesBefore: SmlEmptyNode[]) {
+	private constructor(reader: WsvStreamReader, root: SmlElement, endKeyword: string | null, iterator: WsvStreamLineIterator, preserveWhitespacesAndComments: boolean, emptyNodesBefore: SmlEmptyNode[], isAppendReader: boolean) {
 		this.reader = reader
 		this.root = root
 		this.endKeyword = endKeyword
@@ -255,36 +283,50 @@ export class SmlStreamReader {
 		this.preserveWhitespacesAndComments = preserveWhitespacesAndComments
 		if (!preserveWhitespacesAndComments) { emptyNodesBefore = [] }
 		this.emptyNodesBefore = emptyNodesBefore
+		this.isAppendReader = isAppendReader
 	}
 	
 	static async create(filePath: string, preserveWhitespacesAndComments: boolean = true, chunkSize: number = 4096): Promise<SmlStreamReader> {
 		const reader = await WsvStreamReader.create(filePath, preserveWhitespacesAndComments, chunkSize)
 		try {
-			// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-			const result = await SmlEndKeywordDetector.getEndKeywordAndPosition(reader.handle!, reader.encoding)
+			const result = await SmlEndKeywordDetector.getEndKeywordAndPosition(reader.handle)
 			const endKeyword = result[0]
 			
 			const iterator = await WsvStreamLineIterator.create(reader, endKeyword)
 			
 			const emptyNodesBefore: SmlEmptyNode[] = []
 			const root = await SmlParser.readRootElement(iterator, emptyNodesBefore)
-			return new SmlStreamReader(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore)
+			return new SmlStreamReader(reader, root, endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore, false)
 		} catch (error) {
-			reader.close()
+			await reader.close()
 			throw error
 		}
 	}
+
+	static async getAppendReader(writer: SmlStreamWriter, preserveWhitespacesAndComments: boolean = true, chunkSize: number = 4096): Promise<SmlStreamReader> {
+		if (!writer.existing) { throw new Error(`Writer is not in append mode`) }
+		const reader = WsvStreamReader.getAppendReader(writer.handle, preserveWhitespacesAndComments, chunkSize)
+		const iterator = await WsvStreamLineIterator.create(reader, writer.endKeyword)
+			
+		const emptyNodesBefore: SmlEmptyNode[] = []
+		const root = await SmlParser.readRootElement(iterator, emptyNodesBefore)
+		return new SmlStreamReader(reader, root, writer.endKeyword, iterator, preserveWhitespacesAndComments, emptyNodesBefore, true)
+	}
 	
 	async readNode(): Promise<SmlNode | null> {
+		if (this.endReached || (this.isAppendReader && (await this.iterator.hasLine()) === false)) { return null }
+		let result: SmlNode | null = null
 		if (!this.preserveWhitespacesAndComments) {
 			for (;;) {
-				const result = await SmlParser.readNode(this.iterator, this.root)
+				result = await SmlParser.readNode(this.iterator, this.root)
 				if (result instanceof SmlEmptyNode) { continue }
-				return result
+				break
 			}
 		} else {
-			return await SmlParser.readNode(this.iterator, this.root)
+			result = await SmlParser.readNode(this.iterator, this.root)
 		}
+		if (result === null) { this.endReached = true }
+		return result
 	}
 
 	async close() {
@@ -295,10 +337,10 @@ export class SmlStreamReader {
 // ----------------------------------------------------------------------
 
 abstract class SmlEndKeywordDetector {
-	static getEndKeywordAndPositionSync(handle: number, encoding: ReliableTxtEncoding): [string | null, number] {
+	static getEndKeywordAndPositionSync(handle: SyncReliableTxtFileHandle): [string | null, number] {
 		try {
 			let endKeyword: string | null
-			const iterator: SyncReverseLineIterator = new SyncReverseLineIterator(handle, encoding)
+			const iterator: SyncReverseLineIterator = SyncReverseLineIterator.create(handle)
 			for (;;) {
 				const lineStr: string = iterator.getLine()
 				const line: WsvLine = WsvLine.parse(lineStr)
@@ -317,10 +359,10 @@ abstract class SmlEndKeywordDetector {
 		}
 	}
 
-	static async getEndKeywordAndPosition(handle: fs.promises.FileHandle, encoding: ReliableTxtEncoding): Promise<[string | null, number]> {
+	static async getEndKeywordAndPosition(handle: ReliableTxtFileHandle): Promise<[string | null, number]> {
 		try {
 			let endKeyword: string | null
-			const iterator: ReverseLineIterator = await ReverseLineIterator.create(handle, encoding)
+			const iterator: ReverseLineIterator = await ReverseLineIterator.create(handle)
 			for (;;) {
 				const lineStr: string = await iterator.getLine()
 				const line: WsvLine = WsvLine.parse(lineStr)
@@ -344,7 +386,7 @@ abstract class SmlEndKeywordDetector {
 
 export class SyncSmlStreamWriter {
 	private writer: SyncReliableTxtStreamWriter
-	private endKeyword: string | null
+	readonly endKeyword: string | null
 	private defaultIndentation: string | null
 	private preserveWhitespacesAndComments: boolean
 	
@@ -356,42 +398,52 @@ export class SyncSmlStreamWriter {
 		return this.writer.isClosed
 	}
 
-	get handle(): number | null {
+	get handle(): SyncReliableTxtFileHandle {
 		return this.writer.handle
 	}
 
-	get isAppendMode(): boolean {
-		return this.writer.isAppendMode
+	get existing(): boolean {
+		return this.writer.existing
 	}
 
-	constructor(templateDocument: SmlDocument, filePath: string, preserveWhitespacesAndComment: boolean = true, append: boolean = false) {
-		this.writer = new SyncReliableTxtStreamWriter(filePath, templateDocument.encoding, append)
-		try {
-			this.preserveWhitespacesAndComments = preserveWhitespacesAndComment
-			this.defaultIndentation = templateDocument.defaultIndentation
+	private constructor(writer: SyncReliableTxtStreamWriter, defaultIndentation: string | null, preserveWhitespacesAndComment: boolean, endKeyword: string | null) {
+		this.writer = writer
+		this.defaultIndentation = defaultIndentation
+		this.preserveWhitespacesAndComments = preserveWhitespacesAndComment
+		this.endKeyword = endKeyword
+	}
 
-			if (this.writer.isAppendMode) {
-				// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-				const handle = this.writer.handle!
-				const result = SmlEndKeywordDetector.getEndKeywordAndPositionSync(handle, this.encoding)
-				this.endKeyword = result[0]
+	static create(templateDocument: SmlDocument, filePath: string, mode: WriterMode = WriterMode.CreateOrOverwrite, preserveWhitespacesAndComment: boolean = true): SyncSmlStreamWriter {
+		const writer = SyncReliableTxtStreamWriter.create(filePath, templateDocument.encoding, mode)
+		let endKeyword: string | null
+		try {
+			if (writer.existing) {
+				const result = SmlEndKeywordDetector.getEndKeywordAndPositionSync(writer.handle)
+				endKeyword = result[0]
 				const restLength = result[1]
-				this.writer.internalTruncate(restLength)
+				writer.internalTruncate(restLength)
 			} else {
-				this.endKeyword = templateDocument.endKeyword
+				endKeyword = templateDocument.endKeyword
 				const rootElementName: string = templateDocument.root.name
-				this.writer.writeLine(WsvValue.serialize(rootElementName))
+				writer.writeLine(WsvValue.serialize(rootElementName))
 			}
 		} catch (error) {
-			this.writer.close()
+			writer.close()
 			throw error
 		}
+		return new SyncSmlStreamWriter(writer, templateDocument.defaultIndentation, preserveWhitespacesAndComment, endKeyword)
 	}
 	
 	writeNode(node: SmlNode) {
 		const lines: string[] = []
 		node.internalSerialize(lines, 1, this.defaultIndentation, this.endKeyword, this.preserveWhitespacesAndComments)
 		this.writer.writeLines(lines)
+	}
+
+	writeNodes(nodes: SmlNode[]) {
+		for (const node of nodes) {
+			this.writeNode(node)
+		}
 	}
 
 	close() {
@@ -406,7 +458,7 @@ export class SyncSmlStreamWriter {
 
 export class SmlStreamWriter {
 	private writer: ReliableTxtStreamWriter
-	private endKeyword: string | null
+	readonly endKeyword: string | null
 	private defaultIndentation: string | null
 	private preserveWhitespacesAndComments: boolean
 	
@@ -418,12 +470,12 @@ export class SmlStreamWriter {
 		return this.writer.isClosed
 	}
 
-	get handle(): fs.promises.FileHandle | null {
+	get handle(): ReliableTxtFileHandle {
 		return this.writer.handle
 	}
 
-	get isAppendMode(): boolean {
-		return this.writer.isAppendMode
+	get existing(): boolean {
+		return this.writer.existing
 	}
 
 	private constructor(writer: ReliableTxtStreamWriter, defaultIndentation: string | null, preserveWhitespacesAndComment: boolean, endKeyword: string | null) {
@@ -433,14 +485,12 @@ export class SmlStreamWriter {
 		this.endKeyword = endKeyword
 	}
 
-	static async create(templateDocument: SmlDocument, filePath: string, preserveWhitespacesAndComment: boolean = true, append: boolean = false) {
-		const writer = await ReliableTxtStreamWriter.create(filePath, templateDocument.encoding, append)
+	static async create(templateDocument: SmlDocument, filePath: string, mode: WriterMode = WriterMode.CreateOrOverwrite, preserveWhitespacesAndComment: boolean = true): Promise<SmlStreamWriter> {
+		const writer = await ReliableTxtStreamWriter.create(filePath, templateDocument.encoding, mode)
 		let endKeyword: string | null
 		try {
-			if (writer.isAppendMode) {
-				// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-				const handle = writer.handle!
-				const result = await SmlEndKeywordDetector.getEndKeywordAndPosition(handle, writer.encoding)
+			if (writer.existing) {
+				const result = await SmlEndKeywordDetector.getEndKeywordAndPosition(writer.handle)
 				endKeyword = result[0]
 				const restLength = result[1]
 				await writer.internalTruncate(restLength)
@@ -460,6 +510,12 @@ export class SmlStreamWriter {
 		const lines: string[] = []
 		node.internalSerialize(lines, 1, this.defaultIndentation, this.endKeyword, this.preserveWhitespacesAndComments)
 		await this.writer.writeLines(lines)
+	}
+
+	async writeNodes(nodes: SmlNode[]) {
+		for (const node of nodes) {
+			await this.writeNode(node)
+		}
 	}
 
 	async close() {
