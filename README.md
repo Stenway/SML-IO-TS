@@ -69,13 +69,14 @@ console.log("SML-IO usage")
 
 ```ts
 import { ReliableTxtEncoding } from "@stenway/reliabletxt"
+import { WriterMode } from "@stenway/reliabletxt-io"
 import { SmlDocument, SmlElement, SmlAttribute, SmlEmptyNode } from "@stenway/sml"
 import { SyncSmlStreamReader, SyncSmlStreamWriter } from "@stenway/sml-io"
 
 // writing
 
 let template = new SmlDocument(new SmlElement("POIs"))
-let writer = new SyncSmlStreamWriter(template, "Stream.sml")
+let writer = SyncSmlStreamWriter.create(template, "Stream.sml")
 try {
 	for (let i=0; i<100; i++) {
 		let element = new SmlElement("POI")
@@ -89,8 +90,8 @@ try {
 
 // appending
 
-let appendingWriter = new SyncSmlStreamWriter(
-	template, "Stream.sml", true, true
+let appendingWriter = SyncSmlStreamWriter.create(
+	template, "Stream.sml", WriterMode.CreateOrAppend
 )
 try {
 	appendingWriter.writeNode(new SmlEmptyNode(null, " And now some attributes"))
@@ -105,7 +106,7 @@ try {
 
 // reading
 
-let reader = new SyncSmlStreamReader("Stream.sml")
+let reader = SyncSmlStreamReader.create("Stream.sml")
 try {
 	reader.root.assureName("POIs")
 	let numElements = 0
