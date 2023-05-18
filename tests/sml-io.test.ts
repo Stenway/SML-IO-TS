@@ -3,8 +3,8 @@ import { ReliableTxtEncoding } from '@stenway/reliabletxt'
 import { ReliableTxtFile, WriterMode } from '@stenway/reliabletxt-io'
 import { SmlAttribute, SmlDocument, SmlElement, SmlEmptyNode } from '@stenway/sml'
 import { SyncWsvStreamReader, WsvStreamReader } from '@stenway/wsv-io'
-import * as fs from 'fs'
-import { SmlFile, SmlStreamReader, SmlStreamWriter, SyncSmlStreamReader, SyncSmlStreamWriter, SyncWsvStreamLineIterator, WsvStreamLineIterator } from '../src'
+import * as fs from 'node:fs'
+import { SmlFile, SmlStreamReader, SmlStreamWriter, SyncSmlStreamReader, SyncSmlStreamWriter, SyncWsvStreamLineIterator, WsvStreamLineIterator } from '../src/sml-io.js'
 
 function getFilePath(name: string): string {
 	return "test_files/"+name
