@@ -107,4 +107,114 @@ export declare class SmlStreamWriter {
     writeNodes(nodes: SmlNode[]): Promise<void>;
     close(): Promise<void>;
 }
+export declare class SyncBinarySmlFileHandle {
+    private handle;
+    private mode;
+    readonly preambleSize: number;
+    readonly existing: boolean;
+    get isClosed(): boolean;
+    get canRead(): boolean;
+    get canWrite(): boolean;
+    private constructor();
+    getSize(): number;
+    getAllBytes(): Uint8Array;
+    appendNode(node: SmlNode): void;
+    appendNodes(nodes: SmlNode[]): void;
+    readBytes(buffer: Uint8Array, offset: number, length: number, position?: number | null): number;
+    close(): void;
+    static createReader(filePath: string): SyncBinarySmlFileHandle;
+    static createWriter(templateRootElementName: string, filePath: string, overwriteExisting?: boolean): SyncBinarySmlFileHandle;
+    static createAppender(templateRootElementName: string, filePath: string): SyncBinarySmlFileHandle;
+    private static getVersion;
+}
+export declare class BinarySmlFileHandle {
+    private handle;
+    private mode;
+    readonly preambleSize: number;
+    readonly existing: boolean;
+    get isClosed(): boolean;
+    get canRead(): boolean;
+    get canWrite(): boolean;
+    private constructor();
+    getSize(): Promise<number>;
+    getAllBytes(): Promise<Uint8Array>;
+    appendNode(node: SmlNode): Promise<void>;
+    appendNodes(nodes: SmlNode[]): Promise<void>;
+    readBytes(buffer: Uint8Array, offset: number, length: number, position?: number | null): Promise<number>;
+    close(): Promise<void>;
+    static createReader(filePath: string): Promise<BinarySmlFileHandle>;
+    static createWriter(templateRootElementName: string, filePath: string, overwriteExisting?: boolean): Promise<BinarySmlFileHandle>;
+    static createAppender(templateRootElementName: string, filePath: string): Promise<BinarySmlFileHandle>;
+    private static getVersion;
+}
+export declare abstract class BinarySmlFile {
+    static loadSync(filePath: string): SmlDocument;
+    static load(filePath: string): Promise<SmlDocument>;
+    static saveSync(document: SmlDocument, filePath: string, overwriteExisting?: boolean): void;
+    static save(document: SmlDocument, filePath: string, overwriteExisting?: boolean): Promise<void>;
+    static appendNodesSync(nodes: SmlNode[], templateRootElementName: string, filePath: string): void;
+    static appendNodes(nodes: SmlNode[], templateRootElementName: string, filePath: string): Promise<void>;
+}
+export declare class SyncBinarySmlStreamReader {
+    readonly root: SmlElement;
+    readonly handle: SyncBinarySmlFileHandle;
+    private position;
+    private size;
+    private chunkSize;
+    private bufferOffset;
+    private buffer;
+    private bufferSize;
+    get isClosed(): boolean;
+    private constructor();
+    static create(filePath: string, chunkSize?: number): SyncBinarySmlStreamReader;
+    get hasBytes(): boolean;
+    private readVarInt56;
+    private readString;
+    private readValue;
+    private readAttribute;
+    private readElement;
+    readNode(): SmlNode | null;
+    close(): void;
+}
+export declare class BinarySmlStreamReader {
+    readonly root: SmlElement;
+    readonly handle: BinarySmlFileHandle;
+    private position;
+    private size;
+    private chunkSize;
+    private bufferOffset;
+    private buffer;
+    private bufferSize;
+    get isClosed(): boolean;
+    private constructor();
+    static create(filePath: string, chunkSize?: number): Promise<BinarySmlStreamReader>;
+    get hasBytes(): boolean;
+    private readVarInt56;
+    private readString;
+    private readValue;
+    private readAttribute;
+    private readElement;
+    readNode(): Promise<SmlNode | null>;
+    close(): Promise<void>;
+}
+export declare class SyncBinarySmlStreamWriter {
+    readonly handle: SyncBinarySmlFileHandle;
+    get isClosed(): boolean;
+    get existing(): boolean;
+    private constructor();
+    static create(templateRootElementName: string, filePath: string, mode?: WriterMode): SyncBinarySmlStreamWriter;
+    writeNode(node: SmlNode): void;
+    writeNodes(nodes: SmlNode[]): void;
+    close(): void;
+}
+export declare class BinarySmlStreamWriter {
+    readonly handle: BinarySmlFileHandle;
+    get isClosed(): boolean;
+    get existing(): boolean;
+    private constructor();
+    static create(templateRootElementName: string, filePath: string, mode?: WriterMode): Promise<BinarySmlStreamWriter>;
+    writeNode(node: SmlNode): Promise<void>;
+    writeNodes(nodes: SmlNode[]): Promise<void>;
+    close(): Promise<void>;
+}
 //# sourceMappingURL=sml-io.d.ts.map

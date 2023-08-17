@@ -4,7 +4,7 @@ import { ReliableTxtFile, WriterMode } from '@stenway/reliabletxt-io'
 import { SmlAttribute, SmlDocument, SmlElement, SmlEmptyNode } from '@stenway/sml'
 import { SyncWsvStreamReader, WsvStreamReader } from '@stenway/wsv-io'
 import * as fs from 'node:fs'
-import { SmlFile, SmlStreamReader, SmlStreamWriter, SyncSmlStreamReader, SyncSmlStreamWriter, SyncWsvStreamLineIterator, WsvStreamLineIterator } from '../src/sml-io.js'
+import { BinarySmlFile, BinarySmlFileHandle, BinarySmlStreamReader, BinarySmlStreamWriter, SmlFile, SmlStreamReader, SmlStreamWriter, SyncBinarySmlFileHandle, SyncBinarySmlStreamReader, SyncBinarySmlStreamWriter, SyncSmlStreamReader, SyncSmlStreamWriter, SyncWsvStreamLineIterator, WsvStreamLineIterator } from '../src/sml-io.js'
 
 function getFilePath(name: string): string {
 	return "test_files/"+name
@@ -490,4 +490,286 @@ test("SmlStreamWriter append reader", async () => {
 	writer = await SmlStreamWriter.create(template, testFilePath)
 	await expect(async () => await SmlStreamReader.getAppendReader(writer)).rejects.toThrowError()
 	await writer.close()
+})
+
+// ----------------------------------------------------------------------
+
+const elementEndByte = 0b00000001
+const emptyAttributeNameByte = 0b00000011
+const nullValueByte = 0b00000011
+
+// ----------------------------------------------------------------------
+
+test("BinarySmlFile.saveSync + loadSync", () => {
+	const document = SmlDocument.parse("A\nEnd")
+	BinarySmlFile.saveSync(document, testFilePath)
+	const loadedDocument = BinarySmlFile.loadSync(testFilePath)
+	expect(document.toString()).toEqual(loadedDocument.toString())
+
+	expect(() => BinarySmlFile.saveSync(document, testFilePath, false)).toThrowError()
+})
+
+test("BinarySmlFile.save + load", async () => {
+	const document = SmlDocument.parse("A\nEnd")
+	await BinarySmlFile.save(document, testFilePath)
+	const loadedDocument = await BinarySmlFile.load(testFilePath)
+	expect(document.toString()).toEqual(loadedDocument.toString())
+
+	await expect(async () => await BinarySmlFile.save(document, testFilePath, false)).rejects.toThrowError()
+})
+
+test("BinarySmlFile.appendNodesSync", () => {
+	deleteFileSync(testFilePath)
+	const templateRootName = "Root"
+	BinarySmlFile.appendNodesSync([new SmlAttribute("Attribute1")], templateRootName, testFilePath)
+	BinarySmlFile.appendNodesSync([new SmlAttribute("Attribute2")], templateRootName, testFilePath)
+	BinarySmlFile.appendNodesSync([], templateRootName, testFilePath)
+
+	expect(BinarySmlFile.loadSync(testFilePath).toString()).toEqual("Root\n\tAttribute1 -\n\tAttribute2 -\nEnd")
+})
+
+test("BinarySmlFile.appendNodes", async () => {
+	await deleteFile(testFilePath)
+	const templateRootName = "Root"
+	await BinarySmlFile.appendNodes([new SmlAttribute("Attribute1")], templateRootName, testFilePath)
+	await BinarySmlFile.appendNodes([new SmlAttribute("Attribute2")], templateRootName, testFilePath)
+	await BinarySmlFile.appendNodes([], templateRootName, testFilePath)
+
+	expect((await BinarySmlFile.load(testFilePath)).toString()).toEqual("Root\n\tAttribute1 -\n\tAttribute2 -\nEnd")
+})
+
+// ----------------------------------------------------------------------
+
+test("SyncBinarySmlStreamReader", () => {
+	const document = SmlDocument.parse(`R\nA 1 "" -\nE\nEnd\nE\n"" 2\n""\nEnd\nEnd\nEnd`)
+	BinarySmlFile.saveSync(document, testFilePath)
+
+	const reader = SyncBinarySmlStreamReader.create(testFilePath)
+	expect(reader.isClosed).toEqual(false)
+	expect(reader.root.name).toEqual("R")
+	
+	const node1 = reader.readNode()
+	expect(node1?.isAttribute()).toEqual(true)
+	expect((node1 as SmlAttribute).toString()).toEqual(`A 1 "" -`)
+
+	const node2 = reader.readNode()
+	expect(node2?.isElement()).toEqual(true)
+	expect((node2 as SmlElement).toString()).toEqual(`E\nEnd`)
+
+	const node3 = reader.readNode()
+	expect(node3?.isElement()).toEqual(true)
+	expect((node3 as SmlElement).toString()).toEqual(`E\n\t"" 2\n\t""\n\tEnd\nEnd`)
+
+	const node4 = reader.readNode()
+	expect(node4).toEqual(null)
+	expect(reader.readNode()).toEqual(null)
+
+	reader.close()
+
+	expect(reader.isClosed).toEqual(true)
+})
+
+describe("SyncBinarySmlStreamReader", () => {
+	test("throws", () => {
+		writeBytesSync(new Uint8Array([0x42, 0x53, 0x4D, 0x4C, 0x31, 0b00001011, 0x41]), testFilePath)
+		expect(() => SyncBinarySmlStreamReader.create(testFilePath)).toThrow()
+		expect(() => SyncBinarySmlStreamReader.create(testFilePath, 30)).toThrow()
+	})
+
+	test.each([
+		[[0b00000101, elementEndByte]],
+		[[0b00001001, 0x41, 0b00001001, 0x42]],
+		[[0b00001001, 0x41, emptyAttributeNameByte, nullValueByte]],
+	])(
+		"Given %p throws",
+		(input) => {
+			writeBytesSync(new Uint8Array([0x42, 0x53, 0x4D, 0x4C, 0x31, ...input]), testFilePath)
+			const reader = SyncBinarySmlStreamReader.create(testFilePath)
+			expect(() => reader.readNode()).toThrow()
+			reader.close()
+		}
+	)
+})
+
+test("SyncBinarySmlStreamReader with long value", () => {
+	const longValue = "b".repeat(10000)
+	const root = new SmlElement("E")
+	root.addAttribute("A", [longValue])
+	const document = new SmlDocument(root)
+	BinarySmlFile.saveSync(document, testFilePath)
+	const reader = SyncBinarySmlStreamReader.create(testFilePath)
+	const node = reader.readNode()
+	expect((node as SmlAttribute).values).toEqual([longValue])
+	reader.close()
+})
+
+// ----------------------------------------------------------------------
+
+test("BinarySmlStreamReader", async () => {
+	const document = SmlDocument.parse(`R\nA 1 "" -\nE\nEnd\nE\n"" 2\n""\nEnd\nEnd\nEnd`)
+	await BinarySmlFile.save(document, testFilePath)
+
+	const reader = await BinarySmlStreamReader.create(testFilePath)
+	expect(reader.isClosed).toEqual(false)
+	expect(reader.root.name).toEqual("R")
+	
+	const node1 = await reader.readNode()
+	expect(node1?.isAttribute()).toEqual(true)
+	expect((node1 as SmlAttribute).toString()).toEqual(`A 1 "" -`)
+
+	const node2 = await reader.readNode()
+	expect(node2?.isElement()).toEqual(true)
+	expect((node2 as SmlElement).toString()).toEqual(`E\nEnd`)
+
+	const node3 = await reader.readNode()
+	expect(node3?.isElement()).toEqual(true)
+	expect((node3 as SmlElement).toString()).toEqual(`E\n\t"" 2\n\t""\n\tEnd\nEnd`)
+
+	const node4 = await reader.readNode()
+	expect(node4).toEqual(null)
+	expect(await reader.readNode()).toEqual(null)
+
+	await reader.close()
+
+	expect(reader.isClosed).toEqual(true)
+})
+
+describe("BinarySmlStreamReader", () => {
+	test("throws", async () => {
+		await writeBytes(new Uint8Array([0x42, 0x53, 0x4D, 0x4C, 0x31, 0b00001011, 0x41]), testFilePath)
+		await expect(async () => await BinarySmlStreamReader.create(testFilePath)).rejects.toThrow()
+		await expect(async () => await BinarySmlStreamReader.create(testFilePath, 30)).rejects.toThrow()
+	})
+
+	test.each([
+		[[0b00000101, elementEndByte]],
+		[[0b00001001, 0x41, 0b00001001, 0x42]],
+		[[0b00001001, 0x41, emptyAttributeNameByte, nullValueByte]],
+	])(
+		"Given %p throws",
+		async (input) => {
+			await writeBytes(new Uint8Array([0x42, 0x53, 0x4D, 0x4C, 0x31, ...input]), testFilePath)
+			const reader = await BinarySmlStreamReader.create(testFilePath)
+			await expect(async () => await reader.readNode()).rejects.toThrow()
+			await reader.close()
+		}
+	)
+})
+
+test("BinarySmlStreamReader with long value", async () => {
+	const longValue = "b".repeat(10000)
+	const root = new SmlElement("E")
+	root.addAttribute("A", [longValue])
+	const document = new SmlDocument(root)
+	await BinarySmlFile.save(document, testFilePath)
+	const reader = await BinarySmlStreamReader.create(testFilePath)
+	const node = await reader.readNode()
+	expect((node as SmlAttribute).values).toEqual([longValue])
+	await reader.close()
+})
+
+// ----------------------------------------------------------------------
+
+test("SyncBinarySmlStreamWriter", () => {
+	deleteFileSync(testFilePath)
+	const templateRootName = "Root"
+	const writer = SyncBinarySmlStreamWriter.create(templateRootName, testFilePath)
+	expect(writer.isClosed).toEqual(false)
+	expect(writer.existing).toEqual(false)
+	writer.writeNode(new SmlAttribute("Attribute1"))
+	writer.close()
+	expect(writer.isClosed).toEqual(true)
+
+	expect(BinarySmlFile.loadSync(testFilePath).toString()).toEqual("Root\n\tAttribute1 -\nEnd")
+
+	const appendWriter = SyncBinarySmlStreamWriter.create(templateRootName, testFilePath, WriterMode.CreateOrAppend)
+	expect(appendWriter.existing).toEqual(true)
+	appendWriter.close()
+
+	expect(BinarySmlFile.loadSync(testFilePath).toString()).toEqual("Root\n\tAttribute1 -\nEnd")
+
+	const appendWriter2 = SyncBinarySmlStreamWriter.create(templateRootName, testFilePath, WriterMode.CreateOrAppend)
+	appendWriter2.writeNodes([new SmlAttribute("Attribute2")])
+	appendWriter2.close()
+
+	expect(BinarySmlFile.loadSync(testFilePath).toString()).toEqual("Root\n\tAttribute1 -\n\tAttribute2 -\nEnd")
+})
+
+// ----------------------------------------------------------------------
+
+test("BinarySmlStreamWriter", async () => {
+	await deleteFile(testFilePath)
+	const templateRootName = "Root"
+	const writer = await BinarySmlStreamWriter.create(templateRootName, testFilePath)
+	expect(writer.isClosed).toEqual(false)
+	expect(writer.existing).toEqual(false)
+	await writer.writeNode(new SmlAttribute("Attribute1"))
+	await writer.close()
+	expect(writer.isClosed).toEqual(true)
+
+	expect((await BinarySmlFile.load(testFilePath)).toString()).toEqual("Root\n\tAttribute1 -\nEnd")
+
+	const appendWriter = await BinarySmlStreamWriter.create(templateRootName, testFilePath, WriterMode.CreateOrAppend)
+	expect(appendWriter.existing).toEqual(true)
+	await appendWriter.close()
+
+	expect((await BinarySmlFile.loadSync(testFilePath)).toString()).toEqual("Root\n\tAttribute1 -\nEnd")
+
+	const appendWriter2 = await BinarySmlStreamWriter.create(templateRootName, testFilePath, WriterMode.CreateOrAppend)
+	await appendWriter2.writeNodes([new SmlAttribute("Attribute2")])
+	await appendWriter2.close()
+	
+	expect((await BinarySmlFile.load(testFilePath)).toString()).toEqual("Root\n\tAttribute1 -\n\tAttribute2 -\nEnd")
+})
+
+// ----------------------------------------------------------------------
+
+test("SyncBinarySmlFileHandle", () => {
+	deleteFileSync(testFilePath)
+	const handle = SyncBinarySmlFileHandle.createWriter("Root", testFilePath)
+	expect(handle.canRead).toEqual(false)
+	expect(() => handle.getAllBytes()).toThrow()
+	const array = new Uint8Array(0)
+	expect(() => handle.readBytes(array, 0, 0)).toThrow()
+	handle.close()
+	expect(() => handle.getSize()).toThrow()
+	expect(() => handle.getAllBytes()).toThrow()
+	expect(() => handle.appendNode(new SmlElement("E"))).toThrow()
+	expect(() => handle.appendNodes([new SmlElement("E")])).toThrow()
+	expect(() => handle.readBytes(array, 0, 0)).toThrow()
+
+	const reader = SyncBinarySmlFileHandle.createReader(testFilePath)
+	expect(() => reader.appendNode(new SmlElement("E"))).toThrow()
+	expect(() => reader.appendNodes([new SmlElement("E")])).toThrow()
+	reader.close()
+
+	writeBytesSync(new Uint8Array([0x42, 0x53, 0x4D, 0x4C, 0x32]), testFilePath)
+	expect(() => SyncBinarySmlFileHandle.createReader(testFilePath)).toThrow()
+	expect(() => SyncBinarySmlFileHandle.createAppender("Root", testFilePath)).toThrow()
+})
+
+// ----------------------------------------------------------------------
+
+test("BinarySmlFileHandle", async () => {
+	await deleteFile(testFilePath)
+	const handle = await BinarySmlFileHandle.createWriter("Root", testFilePath)
+	expect(handle.canRead).toEqual(false)
+	await expect(async () => await handle.getAllBytes()).rejects.toThrow()
+	const array = new Uint8Array(0)
+	await expect(async () => await handle.readBytes(array, 0, 0)).rejects.toThrow()
+	await handle.close()
+	await expect(async () => await handle.getSize()).rejects.toThrow()
+	await expect(async () => await handle.getAllBytes()).rejects.toThrow()
+	await expect(async () => await handle.appendNode(new SmlElement("E"))).rejects.toThrow()
+	await expect(async () => await handle.appendNodes([new SmlElement("E")])).rejects.toThrow()
+	await expect(async () => await handle.readBytes(array, 0, 0)).rejects.toThrow()
+
+	const reader = await BinarySmlFileHandle.createReader(testFilePath)
+	await expect(async () => await reader.appendNode(new SmlElement("E"))).rejects.toThrow()
+	await expect(async () => await reader.appendNodes([new SmlElement("E")])).rejects.toThrow()
+	await reader.close()
+
+	await writeBytes(new Uint8Array([0x42, 0x53, 0x4D, 0x4C, 0x32]), testFilePath)
+	await expect(async () => await BinarySmlFileHandle.createReader(testFilePath)).rejects.toThrow()
+	await expect(async () => await BinarySmlFileHandle.createAppender("Root", testFilePath)).rejects.toThrow()
 })

@@ -135,3 +135,11 @@ let document = SmlDocument.parse("Root\nEnd")
 await SmlFile.save(document, "Test.sml")
 let loadedDocument = await SmlFile.load("Test.sml")
 ```
+
+## BinarySML Files
+
+```ts
+let document = SmlDocument.parse("Root\nEnd")
+BinarySmlFile.saveSync(document, "Test.bsml")
+let loadedDocument = BinarySmlFile.loadSync("Test.bsml")
+```
