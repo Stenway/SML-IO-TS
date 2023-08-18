@@ -167,6 +167,8 @@ export declare class SyncBinarySmlStreamReader {
     get isClosed(): boolean;
     private constructor();
     static create(filePath: string, chunkSize?: number): SyncBinarySmlStreamReader;
+    static getAppendReader(writer: SyncBinarySmlStreamWriter, chunkSize?: number): SyncBinarySmlStreamReader;
+    private readHead;
     get hasBytes(): boolean;
     private readVarInt56;
     private readString;
@@ -188,6 +190,8 @@ export declare class BinarySmlStreamReader {
     get isClosed(): boolean;
     private constructor();
     static create(filePath: string, chunkSize?: number): Promise<BinarySmlStreamReader>;
+    static getAppendReader(writer: BinarySmlStreamWriter, chunkSize?: number): Promise<BinarySmlStreamReader>;
+    private readHead;
     get hasBytes(): boolean;
     private readVarInt56;
     private readString;

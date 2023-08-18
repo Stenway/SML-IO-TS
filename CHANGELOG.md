@@ -1,5 +1,8 @@
 ﻿# Changelog
 
+## 0.7.1
+- getAppendReader
+
 ## 0.7.0
 - optimizations
 - added BinarySML support

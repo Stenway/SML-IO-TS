@@ -695,6 +695,24 @@ test("SyncBinarySmlStreamWriter", () => {
 	expect(BinarySmlFile.loadSync(testFilePath).toString()).toEqual("Root\n\tAttribute1 -\n\tAttribute2 -\nEnd")
 })
 
+test("SyncBinarySmlStreamWriter append reader", () => {
+	const document = SmlDocument.parse("Root\n\tAttribute 1\nEnd")
+	BinarySmlFile.saveSync(document, testFilePath)
+
+	const templateRootName = "Root"
+	let writer = SyncBinarySmlStreamWriter.create(templateRootName, testFilePath, WriterMode.CreateOrAppend)
+	expect(writer.existing).toEqual(true)
+	const reader = SyncBinarySmlStreamReader.getAppendReader(writer)
+	const node1 = reader.readNode()
+	expect(node1?.isAttribute()).toEqual(true)
+	expect(reader.readNode()).toEqual(null)
+	writer.close()
+
+	writer = SyncBinarySmlStreamWriter.create(templateRootName, testFilePath)
+	expect(() => SyncBinarySmlStreamReader.getAppendReader(writer)).toThrowError()
+	writer.close()
+})
+
 // ----------------------------------------------------------------------
 
 test("BinarySmlStreamWriter", async () => {
@@ -720,6 +738,24 @@ test("BinarySmlStreamWriter", async () => {
 	await appendWriter2.close()
 	
 	expect((await BinarySmlFile.load(testFilePath)).toString()).toEqual("Root\n\tAttribute1 -\n\tAttribute2 -\nEnd")
+})
+
+test("BinarySmlStreamWriter append reader", async () => {
+	const document = SmlDocument.parse("Root\n\tAttribute 1\nEnd")
+	await BinarySmlFile.save(document, testFilePath)
+
+	const templateRootName = "Root"
+	let writer = await BinarySmlStreamWriter.create(templateRootName, testFilePath, WriterMode.CreateOrAppend)
+	expect(writer.existing).toEqual(true)
+	const reader = await BinarySmlStreamReader.getAppendReader(writer)
+	const node1 = await reader.readNode()
+	expect(node1?.isAttribute()).toEqual(true)
+	expect(await reader.readNode()).toEqual(null)
+	await writer.close()
+
+	writer = await BinarySmlStreamWriter.create(templateRootName, testFilePath)
+	await expect(async () => await BinarySmlStreamReader.getAppendReader(writer)).rejects.toThrowError()
+	await writer.close()
 })
 
 // ----------------------------------------------------------------------

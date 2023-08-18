@@ -840,17 +840,28 @@ export class SyncBinarySmlStreamReader {
         const handle = SyncBinarySmlFileHandle.createReader(filePath);
         try {
             const reader = new SyncBinarySmlStreamReader(handle, chunkSize);
-            const elementVarInt = reader.readVarInt56();
-            if ((elementVarInt & 0b1) === 1) {
-                throw new InvalidBinarySmlError();
-            }
-            reader.root.name = elementVarInt === 0b10 ? "" : reader.readString((elementVarInt >> 1) - 1);
+            reader.readHead();
             return reader;
         }
         catch (error) {
             handle.close();
             throw error;
         }
+    }
+    static getAppendReader(writer, chunkSize = 4096) {
+        if (!writer.existing) {
+            throw new Error(`Writer is not in append mode`);
+        }
+        const reader = new SyncBinarySmlStreamReader(writer.handle, chunkSize);
+        reader.readHead();
+        return reader;
+    }
+    readHead() {
+        const elementVarInt = this.readVarInt56();
+        if ((elementVarInt & 0b1) === 1) {
+            throw new InvalidBinarySmlError();
+        }
+        this.root.name = elementVarInt === 0b10 ? "" : this.readString((elementVarInt >> 1) - 1);
     }
     get hasBytes() {
         return this.position < this.size;
@@ -971,17 +982,29 @@ export class BinarySmlStreamReader {
         try {
             const size = await handle.getSize();
             const reader = new BinarySmlStreamReader(handle, size, chunkSize);
-            const elementVarInt = await reader.readVarInt56();
-            if ((elementVarInt & 0b1) === 1) {
-                throw new InvalidBinarySmlError();
-            }
-            reader.root.name = elementVarInt === 0b10 ? "" : await reader.readString((elementVarInt >> 1) - 1);
+            await reader.readHead();
             return reader;
         }
         catch (error) {
             await handle.close();
             throw error;
         }
+    }
+    static async getAppendReader(writer, chunkSize = 4096) {
+        if (!writer.existing) {
+            throw new Error(`Writer is not in append mode`);
+        }
+        const size = await writer.handle.getSize();
+        const reader = new BinarySmlStreamReader(writer.handle, size, chunkSize);
+        await reader.readHead();
+        return reader;
+    }
+    async readHead() {
+        const elementVarInt = await this.readVarInt56();
+        if ((elementVarInt & 0b1) === 1) {
+            throw new InvalidBinarySmlError();
+        }
+        this.root.name = elementVarInt === 0b10 ? "" : await this.readString((elementVarInt >> 1) - 1);
     }
     get hasBytes() {
         return this.position < this.size;
