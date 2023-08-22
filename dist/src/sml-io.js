@@ -1,9 +1,8 @@
 /* (C) Stefan John / Stenway / SimpleML.com / 2023 */
 import { ReliableTxtFile, ReliableTxtStreamWriter, ReverseLineIterator, SyncReliableTxtStreamWriter, SyncReverseLineIterator, WriterMode } from "@stenway/reliabletxt-io";
-import { Utf16String } from "@stenway/reliabletxt";
-import { BinarySmlDecoder, BinarySmlEncoder, InvalidBinarySmlError, SmlAttribute, SmlDocument, SmlElement, SmlEmptyNode, SmlParser, SmlParserError } from "@stenway/sml";
+import { BinarySmlDecoder, BinarySmlEncoder, InvalidBinarySmlError, SmlDocument, SmlElement, SmlEmptyNode, SmlParser, SmlParserError, Uint8ArrayReader } from "@stenway/sml";
 import { SyncWsvStreamReader, WsvStreamReader } from "@stenway/wsv-io";
-import { VarInt56Decoder, WsvLine, WsvValue } from "@stenway/wsv";
+import { Uint8ArrayBuilder, WsvLine, WsvValue } from "@stenway/wsv";
 import * as fs from 'node:fs';
 // ----------------------------------------------------------------------
 export class SmlFile {
@@ -474,6 +473,7 @@ export class SyncBinarySmlFileHandle {
         this.preambleSize = preambleSize;
         this.mode = mode;
         this.existing = existing;
+        this.builder = new Uint8ArrayBuilder();
     }
     getSize() {
         if (this.handle === null) {
@@ -504,7 +504,9 @@ export class SyncBinarySmlFileHandle {
             throw new Error(`Not a writer`);
         }
         const fileSize = this.getSize();
-        const bytes = BinarySmlEncoder.encodeNode(node);
+        this.builder.reset();
+        BinarySmlEncoder.internalEncodeNode(node, this.builder);
+        const bytes = this.builder.toArray();
         const numBytesWritten = fs.writeSync(this.handle, bytes, 0, bytes.length, fileSize);
         if (numBytesWritten !== bytes.length) {
             throw new Error(`Node was not fully written`);
@@ -518,7 +520,9 @@ export class SyncBinarySmlFileHandle {
             throw new Error(`Not a writer`);
         }
         const fileSize = this.getSize();
-        const bytes = BinarySmlEncoder.encodeNodes(nodes);
+        this.builder.reset();
+        BinarySmlEncoder.internalEncodeNodes(nodes, this.builder);
+        const bytes = this.builder.toArray();
         const numBytesWritten = fs.writeSync(this.handle, bytes, 0, bytes.length, fileSize);
         if (numBytesWritten !== bytes.length) {
             throw new Error(`Nodes were not fully written`);
@@ -546,7 +550,7 @@ export class SyncBinarySmlFileHandle {
             if (version !== "1") {
                 throw new Error(`Not supported BinarySML version '${version}'`);
             }
-            return new SyncBinarySmlFileHandle(handle, 5, 0, true);
+            return new SyncBinarySmlFileHandle(handle, 3, 0, true);
         }
         catch (error) {
             fs.closeSync(handle);
@@ -576,7 +580,7 @@ export class SyncBinarySmlFileHandle {
                 if (version !== "1") {
                     throw new Error(`Not supported BinarySML version '${version}'`);
                 }
-                return new SyncBinarySmlFileHandle(handle, 5, 2, true);
+                return new SyncBinarySmlFileHandle(handle, 3, 2, true);
             }
             catch (error) {
                 fs.closeSync(handle);
@@ -594,9 +598,9 @@ export class SyncBinarySmlFileHandle {
         }
     }
     static getVersion(handle) {
-        let buffer = new Uint8Array(5);
-        const numBytesRead = fs.readSync(handle, buffer, 0, 5, 0);
-        buffer = buffer.slice(0, numBytesRead);
+        let buffer = new Uint8Array(3);
+        const numBytesRead = fs.readSync(handle, buffer, 0, 3, 0);
+        buffer = buffer.subarray(0, numBytesRead);
         return BinarySmlDecoder.getVersion(buffer);
     }
 }
@@ -616,6 +620,7 @@ export class BinarySmlFileHandle {
         this.preambleSize = preambleSize;
         this.mode = mode;
         this.existing = existing;
+        this.builder = new Uint8ArrayBuilder();
     }
     async getSize() {
         if (this.handle === null) {
@@ -647,7 +652,9 @@ export class BinarySmlFileHandle {
             throw new Error(`Not a writer`);
         }
         const fileSize = await this.getSize();
-        const bytes = BinarySmlEncoder.encodeNode(node);
+        this.builder.reset();
+        BinarySmlEncoder.internalEncodeNode(node, this.builder);
+        const bytes = this.builder.toArray();
         const result = await this.handle.write(bytes, 0, bytes.length, fileSize);
         if (result.bytesWritten !== bytes.length) {
             throw new Error(`Node was not fully written`);
@@ -661,7 +668,9 @@ export class BinarySmlFileHandle {
             throw new Error(`Not a writer`);
         }
         const fileSize = await this.getSize();
-        const bytes = BinarySmlEncoder.encodeNodes(nodes);
+        this.builder.reset();
+        BinarySmlEncoder.internalEncodeNodes(nodes, this.builder);
+        const bytes = this.builder.toArray();
         const result = await this.handle.write(bytes, 0, bytes.length, fileSize);
         if (result.bytesWritten !== bytes.length) {
             throw new Error(`Nodes were not fully written`);
@@ -690,7 +699,7 @@ export class BinarySmlFileHandle {
             if (version !== "1") {
                 throw new Error(`Not supported BinarySML version '${version}'`);
             }
-            return new BinarySmlFileHandle(handle, 5, 0, true);
+            return new BinarySmlFileHandle(handle, 3, 0, true);
         }
         catch (error) {
             await handle.close();
@@ -720,7 +729,7 @@ export class BinarySmlFileHandle {
                 if (version !== "1") {
                     throw new Error(`Not supported BinarySML version '${version}'`);
                 }
-                return new BinarySmlFileHandle(handle, 5, 2, true);
+                return new BinarySmlFileHandle(handle, 3, 2, true);
             }
             catch (error) {
                 await handle.close();
@@ -738,9 +747,9 @@ export class BinarySmlFileHandle {
         }
     }
     static async getVersion(handle) {
-        let buffer = new Uint8Array(5);
-        const result = await handle.read(buffer, 0, 5, 0);
-        buffer = buffer.slice(0, result.bytesRead);
+        let buffer = new Uint8Array(3);
+        const result = await handle.read(buffer, 0, 3, 0);
+        buffer = buffer.subarray(0, result.bytesRead);
         return BinarySmlDecoder.getVersion(buffer);
     }
 }
@@ -823,17 +832,14 @@ export class SyncBinarySmlStreamReader {
         return this.handle.isClosed;
     }
     constructor(handle, chunkSize) {
-        this.bufferSize = 0;
+        this.rest = new Uint8Array(0);
         if (chunkSize < 32) {
             throw new RangeError("Chunk size too small");
         }
         this.handle = handle;
         this.position = handle.preambleSize;
-        this.size = handle.getSize();
-        this.chunkSize = chunkSize;
         this.buffer = new Uint8Array(chunkSize);
-        this.bufferOffset = this.position;
-        this.bufferSize = 0;
+        this.reader = new Uint8ArrayReader(new Uint8Array(), 0);
         this.root = new SmlElement("Root");
     }
     static create(filePath, chunkSize = 4096) {
@@ -857,102 +863,62 @@ export class SyncBinarySmlStreamReader {
         return reader;
     }
     readHead() {
-        const elementVarInt = this.readVarInt56();
-        if ((elementVarInt & 0b1) === 1) {
+        const numBytesRead = this.handle.readBytes(this.buffer, 0, this.buffer.length, this.position);
+        if (numBytesRead === 0) {
             throw new InvalidBinarySmlError();
         }
-        this.root.name = elementVarInt === 0b10 ? "" : this.readString((elementVarInt >> 1) - 1);
+        const partialBuffer = this.buffer.subarray(0, numBytesRead);
+        this.reader.reset(partialBuffer, 0);
+        this.root.name = this.reader.readRootElementStart();
+        this.position += numBytesRead;
+        this.rest = partialBuffer.slice(this.reader.offset);
     }
-    get hasBytes() {
-        return this.position < this.size;
-    }
-    readVarInt56() {
-        if (this.position >= this.bufferOffset + this.bufferSize - 10) {
-            this.bufferSize = this.handle.readBytes(this.buffer, 0, this.chunkSize, this.position);
-            this.bufferOffset = this.position;
-        }
-        const [varIntValue, varIntLength] = VarInt56Decoder.decode(this.buffer, this.position - this.bufferOffset);
-        this.position += varIntLength;
-        return varIntValue;
-    }
-    readString(numBytes) {
-        if (this.position + numBytes >= this.bufferOffset + this.bufferSize) {
-            if (numBytes > this.chunkSize) {
-                this.chunkSize = numBytes + 10;
-                this.buffer = new Uint8Array(this.chunkSize);
-            }
-            this.bufferSize = this.handle.readBytes(this.buffer, 0, this.chunkSize, this.position);
-            this.bufferOffset = this.position;
-            if (this.bufferSize < numBytes) {
-                throw new Error("Could not read string value");
-            }
-        }
-        const valueBytes = this.buffer.subarray(this.position - this.bufferOffset, this.position - this.bufferOffset + numBytes);
-        this.position += numBytes;
-        return Utf16String.fromUtf8Bytes(valueBytes);
-    }
-    readValue(values) {
-        const varInt = this.readVarInt56();
-        if (varInt === 0) {
-            return true;
-        }
-        else if (varInt === 1) {
-            values.push(null);
-        }
-        else if (varInt === 2) {
-            values.push("");
-        }
-        else {
-            const valueLength = varInt - 2;
-            const strValue = this.readString(valueLength);
-            values.push(strValue);
-        }
-        return false;
-    }
-    readAttribute(attributeVarInt) {
-        const attributeName = attributeVarInt === 0b1 ? "" : this.readString(attributeVarInt >> 1);
-        const values = [];
-        while (this.hasBytes) {
-            const wasAttributeEnd = this.readValue(values);
-            if (wasAttributeEnd === true) {
-                return new SmlAttribute(attributeName, values);
-            }
-        }
-        throw new InvalidBinarySmlError();
-    }
-    readElement(elementVarInt) {
-        const elementName = elementVarInt === 0b10 ? "" : this.readString((elementVarInt >> 1) - 1);
-        const element = new SmlElement(elementName);
-        while (this.hasBytes) {
-            const varInt = this.readVarInt56();
-            if (varInt === 0) {
-                return element;
-            }
-            else if ((varInt & 0b1) === 0) {
-                const childElement = this.readElement(varInt);
-                element.addNode(childElement);
-            }
-            else {
-                const childAttribute = this.readAttribute(varInt);
-                element.addNode(childAttribute);
-            }
-        }
-        throw new InvalidBinarySmlError();
-    }
-    readNode() {
-        if (this.hasBytes === false) {
+    readNodeBuffer() {
+        if (this.rest === null) {
             return null;
         }
-        const varInt = this.readVarInt56();
-        if (varInt === 0) {
-            throw new InvalidBinarySmlError();
+        let lastStartIndex = 0;
+        let current = this.rest;
+        for (;;) {
+            const endIndex = BinarySmlDecoder.internalGetNodeEndIndex(current, lastStartIndex);
+            if (endIndex >= 0) {
+                const nodeBytes = current.subarray(0, endIndex + 1);
+                this.rest = current.subarray(endIndex + 1);
+                return nodeBytes;
+            }
+            else {
+                lastStartIndex = current.length;
+                const numBytesRead = this.handle.readBytes(this.buffer, 0, this.buffer.length, this.position);
+                if (numBytesRead === 0) {
+                    this.rest = null;
+                    if (current.length === 0) {
+                        return null;
+                    }
+                    return current;
+                }
+                this.position += numBytesRead;
+                const newCurrent = new Uint8Array(current.length + numBytesRead);
+                newCurrent.set(current, 0);
+                if (numBytesRead < this.buffer.length) {
+                    newCurrent.set(this.buffer.subarray(0, numBytesRead), current.length);
+                }
+                else {
+                    newCurrent.set(this.buffer, current.length);
+                }
+                current = newCurrent;
+            }
         }
-        else if ((varInt & 0b1) === 0) {
-            return this.readElement(varInt);
+    }
+    readNode() {
+        if (this.handle.isClosed) {
+            throw new Error("Stream reader is closed");
         }
-        else {
-            return this.readAttribute(varInt);
+        const nodeBuffer = this.readNodeBuffer();
+        if (nodeBuffer === null) {
+            return null;
         }
+        this.reader.reset(nodeBuffer, 0);
+        return BinarySmlDecoder.internalDecodeNode(this.reader);
     }
     close() {
         this.handle.close();
@@ -963,25 +929,21 @@ export class BinarySmlStreamReader {
     get isClosed() {
         return this.handle.isClosed;
     }
-    constructor(handle, size, chunkSize) {
-        this.bufferSize = 0;
+    constructor(handle, chunkSize) {
+        this.rest = new Uint8Array(0);
         if (chunkSize < 32) {
             throw new RangeError("Chunk size too small");
         }
         this.handle = handle;
         this.position = handle.preambleSize;
-        this.size = size;
-        this.chunkSize = chunkSize;
         this.buffer = new Uint8Array(chunkSize);
-        this.bufferOffset = this.position;
-        this.bufferSize = 0;
+        this.reader = new Uint8ArrayReader(new Uint8Array(), 0);
         this.root = new SmlElement("Root");
     }
     static async create(filePath, chunkSize = 4096) {
         const handle = await BinarySmlFileHandle.createReader(filePath);
         try {
-            const size = await handle.getSize();
-            const reader = new BinarySmlStreamReader(handle, size, chunkSize);
+            const reader = new BinarySmlStreamReader(handle, chunkSize);
             await reader.readHead();
             return reader;
         }
@@ -994,108 +956,71 @@ export class BinarySmlStreamReader {
         if (!writer.existing) {
             throw new Error(`Writer is not in append mode`);
         }
-        const size = await writer.handle.getSize();
-        const reader = new BinarySmlStreamReader(writer.handle, size, chunkSize);
+        const reader = new BinarySmlStreamReader(writer.handle, chunkSize);
         await reader.readHead();
         return reader;
     }
     async readHead() {
-        const elementVarInt = await this.readVarInt56();
-        if ((elementVarInt & 0b1) === 1) {
+        const numBytesRead = await this.handle.readBytes(this.buffer, 0, this.buffer.length, this.position);
+        if (numBytesRead === 0) {
             throw new InvalidBinarySmlError();
         }
-        this.root.name = elementVarInt === 0b10 ? "" : await this.readString((elementVarInt >> 1) - 1);
+        const partialBuffer = this.buffer.subarray(0, numBytesRead);
+        this.reader.reset(partialBuffer, 0);
+        this.root.name = this.reader.readRootElementStart();
+        this.position += numBytesRead;
+        this.rest = partialBuffer.slice(this.reader.offset);
     }
-    get hasBytes() {
-        return this.position < this.size;
-    }
-    async readVarInt56() {
-        if (this.position >= this.bufferOffset + this.bufferSize - 10) {
-            this.bufferSize = await this.handle.readBytes(this.buffer, 0, this.chunkSize, this.position);
-            this.bufferOffset = this.position;
-        }
-        const [varIntValue, varIntLength] = VarInt56Decoder.decode(this.buffer, this.position - this.bufferOffset);
-        this.position += varIntLength;
-        return varIntValue;
-    }
-    async readString(numBytes) {
-        if (this.position + numBytes >= this.bufferOffset + this.bufferSize) {
-            if (numBytes > this.chunkSize) {
-                this.chunkSize = numBytes + 10;
-                this.buffer = new Uint8Array(this.chunkSize);
-            }
-            this.bufferSize = await this.handle.readBytes(this.buffer, 0, this.chunkSize, this.position);
-            this.bufferOffset = this.position;
-            if (this.bufferSize < numBytes) {
-                throw new Error("Could not read string value");
-            }
-        }
-        const valueBytes = this.buffer.subarray(this.position - this.bufferOffset, this.position - this.bufferOffset + numBytes);
-        this.position += numBytes;
-        return Utf16String.fromUtf8Bytes(valueBytes);
-    }
-    async readValue(values) {
-        const varInt = await this.readVarInt56();
-        if (varInt === 0) {
-            return true;
-        }
-        else if (varInt === 1) {
-            values.push(null);
-        }
-        else if (varInt === 2) {
-            values.push("");
-        }
-        else {
-            const valueLength = varInt - 2;
-            const strValue = await this.readString(valueLength);
-            values.push(strValue);
-        }
-        return false;
-    }
-    async readAttribute(attributeVarInt) {
-        const attributeName = attributeVarInt === 0b1 ? "" : await this.readString(attributeVarInt >> 1);
-        const values = [];
-        while (this.hasBytes) {
-            const wasAttributeEnd = await this.readValue(values);
-            if (wasAttributeEnd === true) {
-                return new SmlAttribute(attributeName, values);
-            }
-        }
-        throw new InvalidBinarySmlError();
-    }
-    async readElement(elementVarInt) {
-        const elementName = elementVarInt === 0b10 ? "" : await this.readString((elementVarInt >> 1) - 1);
-        const element = new SmlElement(elementName);
-        while (this.hasBytes) {
-            const varInt = await this.readVarInt56();
-            if (varInt === 0) {
-                return element;
-            }
-            else if ((varInt & 0b1) === 0) {
-                const childElement = await this.readElement(varInt);
-                element.addNode(childElement);
-            }
-            else {
-                const childAttribute = await this.readAttribute(varInt);
-                element.addNode(childAttribute);
-            }
-        }
-        throw new InvalidBinarySmlError();
-    }
-    async readNode() {
-        if (this.hasBytes === false) {
+    async readNodeBuffer() {
+        if (this.rest === null) {
             return null;
         }
-        const varInt = await this.readVarInt56();
-        if (varInt === 0) {
+        let lastStartIndex = 0;
+        let current = this.rest;
+        for (;;) {
+            const endIndex = BinarySmlDecoder.internalGetNodeEndIndex(current, lastStartIndex);
+            if (endIndex >= 0) {
+                const nodeBytes = current.subarray(0, endIndex + 1);
+                this.rest = current.subarray(endIndex + 1);
+                return nodeBytes;
+            }
+            else {
+                lastStartIndex = current.length;
+                const numBytesRead = await this.handle.readBytes(this.buffer, 0, this.buffer.length, this.position);
+                if (numBytesRead === 0) {
+                    this.rest = null;
+                    if (current.length === 0) {
+                        return null;
+                    }
+                    return current;
+                }
+                this.position += numBytesRead;
+                const newCurrent = new Uint8Array(current.length + numBytesRead);
+                newCurrent.set(current, 0);
+                if (numBytesRead < this.buffer.length) {
+                    newCurrent.set(this.buffer.subarray(0, numBytesRead), current.length);
+                }
+                else {
+                    newCurrent.set(this.buffer, current.length);
+                }
+                current = newCurrent;
+            }
+        }
+    }
+    async readNode() {
+        if (this.handle.isClosed) {
+            throw new Error("Stream reader is closed");
+        }
+        const nodeBuffer = await this.readNodeBuffer();
+        if (nodeBuffer === null) {
+            return null;
+        }
+        this.reader.reset(nodeBuffer, 0);
+        const result = BinarySmlDecoder.internalDecodeNode(this.reader);
+        if (this.reader.hasBytes) {
             throw new InvalidBinarySmlError();
         }
-        else if ((varInt & 0b1) === 0) {
-            return await this.readElement(varInt);
-        }
-        else {
-            return await this.readAttribute(varInt);
-        }
+        return result;
     }
     async close() {
         await this.handle.close();

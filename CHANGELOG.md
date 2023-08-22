@@ -1,5 +1,8 @@
 ﻿# Changelog
 
+## 0.8.0
+- BinarySML switch
+
 ## 0.7.1
 - getAppendReader
 

@@ -112,6 +112,7 @@ export declare class SyncBinarySmlFileHandle {
     private mode;
     readonly preambleSize: number;
     readonly existing: boolean;
+    private builder;
     get isClosed(): boolean;
     get canRead(): boolean;
     get canWrite(): boolean;
@@ -132,6 +133,7 @@ export declare class BinarySmlFileHandle {
     private mode;
     readonly preambleSize: number;
     readonly existing: boolean;
+    private builder;
     get isClosed(): boolean;
     get canRead(): boolean;
     get canWrite(): boolean;
@@ -159,22 +161,15 @@ export declare class SyncBinarySmlStreamReader {
     readonly root: SmlElement;
     readonly handle: SyncBinarySmlFileHandle;
     private position;
-    private size;
-    private chunkSize;
-    private bufferOffset;
     private buffer;
-    private bufferSize;
+    private rest;
+    private reader;
     get isClosed(): boolean;
     private constructor();
     static create(filePath: string, chunkSize?: number): SyncBinarySmlStreamReader;
     static getAppendReader(writer: SyncBinarySmlStreamWriter, chunkSize?: number): SyncBinarySmlStreamReader;
     private readHead;
-    get hasBytes(): boolean;
-    private readVarInt56;
-    private readString;
-    private readValue;
-    private readAttribute;
-    private readElement;
+    private readNodeBuffer;
     readNode(): SmlNode | null;
     close(): void;
 }
@@ -182,22 +177,15 @@ export declare class BinarySmlStreamReader {
     readonly root: SmlElement;
     readonly handle: BinarySmlFileHandle;
     private position;
-    private size;
-    private chunkSize;
-    private bufferOffset;
     private buffer;
-    private bufferSize;
+    private rest;
+    private reader;
     get isClosed(): boolean;
     private constructor();
     static create(filePath: string, chunkSize?: number): Promise<BinarySmlStreamReader>;
     static getAppendReader(writer: BinarySmlStreamWriter, chunkSize?: number): Promise<BinarySmlStreamReader>;
     private readHead;
-    get hasBytes(): boolean;
-    private readVarInt56;
-    private readString;
-    private readValue;
-    private readAttribute;
-    private readElement;
+    private readNodeBuffer;
     readNode(): Promise<SmlNode | null>;
     close(): Promise<void>;
 }

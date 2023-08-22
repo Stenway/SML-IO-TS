@@ -494,9 +494,11 @@ test("SmlStreamWriter append reader", async () => {
 
 // ----------------------------------------------------------------------
 
-const elementEndByte = 0b00000001
-const emptyAttributeNameByte = 0b00000011
-const nullValueByte = 0b00000011
+const elementStartByte = 0b11111111
+const elementEndByte = 0b11111110
+
+const aByte = 0x41
+const eByte = 0x45
 
 // ----------------------------------------------------------------------
 
@@ -571,36 +573,45 @@ test("SyncBinarySmlStreamReader", () => {
 
 describe("SyncBinarySmlStreamReader", () => {
 	test("throws", () => {
-		writeBytesSync(new Uint8Array([0x42, 0x53, 0x4D, 0x4C, 0x31, 0b00001011, 0x41]), testFilePath)
-		expect(() => SyncBinarySmlStreamReader.create(testFilePath)).toThrow()
-		expect(() => SyncBinarySmlStreamReader.create(testFilePath, 30)).toThrow()
+		writeBytesSync(new Uint8Array([0x42, 0x53, 0x31]), testFilePath)
+		expect(() => SyncBinarySmlStreamReader.create(testFilePath)).toThrowError()
+		expect(() => SyncBinarySmlStreamReader.create(testFilePath, 30)).toThrowError()
+	})
+
+	test("throws", () => {
+		writeBytesSync(new Uint8Array([0x42, 0x53, 0x31, aByte, elementStartByte]), testFilePath)
+		const reader = SyncBinarySmlStreamReader.create(testFilePath)
+		reader.close()
+		expect(() => reader.readNode()).toThrowError()
 	})
 
 	test.each([
-		[[0b00000101, elementEndByte]],
-		[[0b00001001, 0x41, 0b00001001, 0x42]],
-		[[0b00001001, 0x41, emptyAttributeNameByte, nullValueByte]],
+		[[eByte, elementStartByte, eByte, elementEndByte]],
 	])(
 		"Given %p throws",
 		(input) => {
-			writeBytesSync(new Uint8Array([0x42, 0x53, 0x4D, 0x4C, 0x31, ...input]), testFilePath)
+			writeBytesSync(new Uint8Array([0x42, 0x53, 0x31, ...input]), testFilePath)
 			const reader = SyncBinarySmlStreamReader.create(testFilePath)
-			expect(() => reader.readNode()).toThrow()
+			expect(() => reader.readNode()).toThrowError()
 			reader.close()
 		}
 	)
-})
 
-test("SyncBinarySmlStreamReader with long value", () => {
-	const longValue = "b".repeat(10000)
-	const root = new SmlElement("E")
-	root.addAttribute("A", [longValue])
-	const document = new SmlDocument(root)
-	BinarySmlFile.saveSync(document, testFilePath)
-	const reader = SyncBinarySmlStreamReader.create(testFilePath)
-	const node = reader.readNode()
-	expect((node as SmlAttribute).values).toEqual([longValue])
-	reader.close()
+	test.each([
+		[294],
+		[588],
+	])("Long value", (input) => {
+		const longValue1 = "abcdefghijklmnopq".repeat(input)
+		const longValue2 = "abcdefghijklmnopqr".repeat(input)
+		const root = new SmlElement("E")
+		root.addAttribute("A", [longValue1, longValue2, "c", "d"])
+		const document = new SmlDocument(root)
+		BinarySmlFile.saveSync(document, testFilePath)
+		const reader = SyncBinarySmlStreamReader.create(testFilePath)
+		const node = reader.readNode()
+		expect((node as SmlAttribute).values).toEqual([longValue1, longValue2, "c", "d"])
+		reader.close()
+	})
 })
 
 // ----------------------------------------------------------------------
@@ -636,36 +647,45 @@ test("BinarySmlStreamReader", async () => {
 
 describe("BinarySmlStreamReader", () => {
 	test("throws", async () => {
-		await writeBytes(new Uint8Array([0x42, 0x53, 0x4D, 0x4C, 0x31, 0b00001011, 0x41]), testFilePath)
-		await expect(async () => await BinarySmlStreamReader.create(testFilePath)).rejects.toThrow()
-		await expect(async () => await BinarySmlStreamReader.create(testFilePath, 30)).rejects.toThrow()
+		await writeBytes(new Uint8Array([0x42, 0x53, 0x31]), testFilePath)
+		await expect(async () => await BinarySmlStreamReader.create(testFilePath)).rejects.toThrowError()
+		await expect(async () => await BinarySmlStreamReader.create(testFilePath, 30)).rejects.toThrowError()
+	})
+
+	test("throws", async () => {
+		await writeBytes(new Uint8Array([0x42, 0x53, 0x31, aByte, elementStartByte]), testFilePath)
+		const reader = await BinarySmlStreamReader.create(testFilePath)
+		await reader.close()
+		await expect(async () => await reader.readNode()).rejects.toThrowError()
 	})
 
 	test.each([
-		[[0b00000101, elementEndByte]],
-		[[0b00001001, 0x41, 0b00001001, 0x42]],
-		[[0b00001001, 0x41, emptyAttributeNameByte, nullValueByte]],
+		[[eByte, elementStartByte, eByte, elementEndByte]],
 	])(
 		"Given %p throws",
 		async (input) => {
-			await writeBytes(new Uint8Array([0x42, 0x53, 0x4D, 0x4C, 0x31, ...input]), testFilePath)
+			await writeBytes(new Uint8Array([0x42, 0x53, 0x31, ...input]), testFilePath)
 			const reader = await BinarySmlStreamReader.create(testFilePath)
-			await expect(async () => await reader.readNode()).rejects.toThrow()
+			await expect(async () => await reader.readNode()).rejects.toThrowError()
 			await reader.close()
 		}
 	)
-})
 
-test("BinarySmlStreamReader with long value", async () => {
-	const longValue = "b".repeat(10000)
-	const root = new SmlElement("E")
-	root.addAttribute("A", [longValue])
-	const document = new SmlDocument(root)
-	await BinarySmlFile.save(document, testFilePath)
-	const reader = await BinarySmlStreamReader.create(testFilePath)
-	const node = await reader.readNode()
-	expect((node as SmlAttribute).values).toEqual([longValue])
-	await reader.close()
+	test.each([
+		[294],
+		[588],
+	])("Long value", async (input) => {
+		const longValue1 = "abcdefghijklmnopq".repeat(input)
+		const longValue2 = "abcdefghijklmnopqr".repeat(input)
+		const root = new SmlElement("E")
+		root.addAttribute("A", [longValue1, longValue2, "c", "d"])
+		const document = new SmlDocument(root)
+		await BinarySmlFile.save(document, testFilePath)
+		const reader = await BinarySmlStreamReader.create(testFilePath)
+		const node = await reader.readNode()
+		expect((node as SmlAttribute).values).toEqual([longValue1, longValue2, "c", "d"])
+		await reader.close()
+	})
 })
 
 // ----------------------------------------------------------------------
