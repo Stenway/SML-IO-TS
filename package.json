@@ -1,6 +1,6 @@
 {
   "name": "@stenway/sml-io",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Read and write SML files",
   "homepage": "https://www.simpleml.com",
@@ -42,10 +42,10 @@
     "typescript": "^5.0.4"
   },
   "dependencies": {
-    "@stenway/reliabletxt": "^1.0.0",
-    "@stenway/reliabletxt-io": "^1.0.0",
-    "@stenway/sml": "^1.0.0",
-    "@stenway/wsv": "^1.0.0",
-    "@stenway/wsv-io": "^1.0.0"
+    "@stenway/reliabletxt": "^1.1.0",
+    "@stenway/reliabletxt-io": "^1.1.0",
+    "@stenway/sml": "^1.1.0",
+    "@stenway/wsv": "^1.1.0",
+    "@stenway/wsv-io": "^1.1.0"
   }
 }
